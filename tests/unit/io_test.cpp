@@ -167,3 +167,50 @@ CHRONICLE_TEST(call_site_round_trips_through_on_disk_format) {
     CHRONICLE_CHECK(stream->events[2].call_site.file.find("io_test.cpp") != std::string::npos);
     CHRONICLE_CHECK(stream->events[2].call_site.line > 0);
 }
+
+// docs/adr/0019-hybrid-logical-clock.md / format v4: hlc round-trips
+// through the on-disk format -- unknown when the producing Session never
+// enabled causal_clock, known and strictly increasing when it did.
+CHRONICLE_TEST(hlc_round_trips_through_on_disk_format_when_disabled) {
+    Session session; // causal_clock defaults to false
+    chronicle::tracked<int> health{100};
+    chronicle::track(health, session, "player.health");
+    health = 75;
+
+    std::stringstream ss;
+    {
+        SessionWriter writer(ss, session);
+        writer.write(health);
+    }
+
+    auto const loaded = load_session(ss);
+    auto const* stream = loaded.find("player.health");
+    CHRONICLE_CHECK(stream != nullptr);
+    for (auto const& event : stream->events) {
+        CHRONICLE_CHECK(!is_known(event.hlc));
+    }
+}
+
+CHRONICLE_TEST(hlc_round_trips_through_on_disk_format_when_enabled) {
+    Session session(Session::Config{RetentionPolicy::ring_window(1024), OverflowPolicy::DropOldest, 64, true});
+    chronicle::tracked<int> health{100};
+    chronicle::track(health, session, "player.health");
+    health = 75;
+    health = 50;
+
+    std::stringstream ss;
+    {
+        SessionWriter writer(ss, session);
+        writer.write(health);
+    }
+
+    auto const loaded = load_session(ss);
+    auto const* stream = loaded.find("player.health");
+    CHRONICLE_CHECK(stream != nullptr);
+    CHRONICLE_CHECK(stream->events.size() == 3);
+    CHRONICLE_CHECK(is_known(stream->events[0].hlc));
+    CHRONICLE_CHECK(is_known(stream->events[1].hlc));
+    CHRONICLE_CHECK(is_known(stream->events[2].hlc));
+    CHRONICLE_CHECK(stream->events[0].hlc < stream->events[1].hlc);
+    CHRONICLE_CHECK(stream->events[1].hlc < stream->events[2].hlc);
+}

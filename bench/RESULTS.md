@@ -105,6 +105,21 @@ resolve a number smaller than its own jitter. Reported honestly as "no
 measurable regression at this environment's noise floor," not rounded up to
 a precise number that would overstate the confidence this data supports.
 
+## Hybrid logical clock cost ([ADR 0019](../docs/adr/0019-hybrid-logical-clock.md))
+
+Unlike the Tracy bridge's hook check above, this is a *real, measurable*
+cost, not noise-floor-indistinguishable: `tracked_assignment_causal_clock`
+(`Session::Config::causal_clock = true`) measured **86.18 ns/op** and
+**103.50 ns/op** across two runs, against **63-67 ns/op** for the same
+benchmark with it disabled (the existing `RingWindow`/`Unbounded` rows
+above) — a consistent, honest **~30-50% overhead** from the atomic CAS
+loop `Session::next_hlc_tick()` does on every `record()` call once enabled.
+This is exactly why the feature is opt-in (`Session::Config::causal_clock`
+defaults `false`) rather than always-on: every session that doesn't need
+cross-stream HLC queries pays nothing beyond the same one-branch check
+already established as negligible for `Stream<T>::RecordHook`
+(the Tracy bridge section above).
+
 ## What this does NOT establish
 
 This is a single machine, single compiler, unisolated environment — it is

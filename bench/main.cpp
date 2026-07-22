@@ -96,6 +96,26 @@ BenchResult bench_tracked_assignment_unbounded() {
             "tracked<int>::operator= (Unbounded, undrained)", ns};
 }
 
+// docs/adr/0019-hybrid-logical-clock.md: causal_clock adds an atomic CAS
+// loop to record() when enabled (one branch, same cost model as
+// Stream<T>::RecordHook, when disabled -- see the other tracked_assignment
+// benchmarks above for that number). Measured here rather than assumed,
+// same discipline as every other hot-path-adjacent addition in this
+// codebase.
+BenchResult bench_tracked_assignment_causal_clock() {
+    chronicle::Session session(chronicle::Session::Config{
+        chronicle::RetentionPolicy::ring_window(1024), chronicle::OverflowPolicy::DropOldest, 64, true});
+    chronicle::tracked<int> value{0};
+    chronicle::track(value, session, "bench.tracked_causal_clock");
+    int counter = 0;
+    double const ns = time_ns_per_op(1'000'000, [&] {
+        value = counter++;
+        g_sink = value.get();
+    });
+    return {"tracked_assignment_causal_clock_single_threaded",
+            "tracked<int>::operator= (causal_clock enabled)", ns};
+}
+
 BenchResult bench_history_query(std::size_t log_size) {
     // Unbounded retention + periodic drains so `log_size` events genuinely
     // land in the durable log (RingWindow's default 1024 cap would silently
@@ -219,6 +239,7 @@ int main(int argc, char** argv) {
     results.push_back(bench_untracked_assignment());
     results.push_back(bench_tracked_assignment_ring_window());
     results.push_back(bench_tracked_assignment_unbounded());
+    results.push_back(bench_tracked_assignment_causal_clock());
     results.push_back(bench_history_query(10));
     results.push_back(bench_history_query(1'000));
     results.push_back(bench_history_query(100'000));

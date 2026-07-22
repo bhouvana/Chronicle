@@ -233,12 +233,23 @@ lock-free per-thread ring buffer the architecture always specified.
   no dates are committed here; each milestone starts only once its predecessor's
   standalone value has been validated by real usage/feedback, not by a schedule.
 
-## v2.0 — "Ecosystem & advanced replay"
+## v2.0 — "Ecosystem & advanced replay" — IN PROGRESS
 - PMR allocator/arena adapter.
 - VS Code extension.
 - Perfetto export bridge.
-- Hybrid logical clock upgrade for cross-stream causal ordering (Phase 6's reserved
-  field), improving on best-effort timestamp correlation.
+- [x] Hybrid logical clock upgrade for cross-stream causal ordering: `include/chronicle/hlc.hpp`'s
+  `HlcTimestamp`/`HybridLogicalClock`, opt-in via `Session::Config::causal_clock` (default `off` —
+  a real, measured ~30-50% per-event cost when enabled, not the noise-floor-indistinguishable cost
+  of e.g. the Tracy bridge's hook check). Verified directly that the "reserved field" docs/06 and
+  ADR 0003 describe never actually existed in the implementation — a genuinely new field (format
+  v3 → v4), not a reserved slot filled in. The real capability this adds:
+  `chronicle::snapshot_at_hlc(field, hlc)` answers cross-stream queries ("what was `player.health`
+  when `player.zone` last changed") that per-stream version counters structurally cannot, since two
+  different streams' version counters share no common meaning — verified with a real cross-stream
+  test, not just same-stream monotonicity. Does **not** solve genuine cross-thread causal ordering
+  under races (restated honestly, not overclaimed) — only a tie-free, cross-stream-comparable
+  ordinal. A genuine concurrent stress test (8 threads × 5,000 ticks, stable across 5 runs)
+  confirms the underlying CAS-packed atomic never loses an update. See [ADR 0019](adr/0019-hybrid-logical-clock.md).
 - Research spike (not a commitment) into deterministic multithreaded replay
   (Phase 12) — evaluated for a possible v3 based on findings, not pre-committed.
 - **Standalone value**: the ecosystem-integration milestone — Chronicle fits into

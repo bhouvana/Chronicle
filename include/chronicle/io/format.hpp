@@ -11,6 +11,7 @@
 #include <string_view>
 #include <thread>
 
+#include "chronicle/hlc.hpp"
 #include "chronicle/io/wire.hpp"
 
 // Shared file-format constants and helpers, used by both the write side
@@ -28,15 +29,17 @@ enum class StreamShape : std::uint8_t {
 };
 
 inline constexpr char kMagic[4] = {'C', 'H', 'R', 'N'};
-// v3 (docs/adr/0014-storage-engine-compression.md): the header now carries a
-// one-byte CompressionKind tag (see below), always written/read in the
-// clear so any reader can decide how to interpret the rest of the file
-// before touching a single compressed byte. A breaking, non-backward-
-// compatible bump from v2 -- v1/v2 files can no longer be read. No
-// compatibility requirement exists yet for this format (docs/11's CI/
-// versioning story hasn't been reached), so this is a clean break, not a
-// migration, same as the v1->v2 bump before it.
-inline constexpr std::uint32_t kFormatVersion = 3;
+// v4 (docs/adr/0019-hybrid-logical-clock.md): every event header now also
+// carries an HlcTimestamp (physical_us + logical), right after call_site --
+// docs/06-recording-model.md and docs/adr/0003-causal-not-global-ordering.md
+// both describe this as filling an already-"reserved" field; verified
+// directly that no such field existed anywhere in the prior format, so this
+// is a genuinely new field, not a reserved slot being filled in. A
+// breaking, non-backward-compatible bump from v3 -- v1/v2/v3 files can no
+// longer be read. No compatibility requirement exists yet for this format
+// (docs/11's CI/versioning story hasn't been reached), so this is a clean
+// break, not a migration, same as every prior bump.
+inline constexpr std::uint32_t kFormatVersion = 4;
 
 // Everything after this tag in the file is either the plain payload
 // (None) or exactly one compressed blob covering the *entire* rest of the
@@ -128,6 +131,23 @@ inline CallSiteInfo read_call_site(std::istream& is) {
     info.column = read_u64(is);
     info.function = read_string(is);
     return info;
+}
+
+// docs/adr/0019-hybrid-logical-clock.md: HlcTimestamp{} (physical_us == 0
+// && logical == 0) means "not computed for this event" (the producing
+// Session's Config::causal_clock was false), same sentinel convention as
+// call_site's line == 0 -- faithfully serialized as zero rather than
+// inventing a fallback, exactly like write_call_site above.
+inline void write_hlc(std::ostream& os, HlcTimestamp const& hlc) {
+    write_u64(os, hlc.physical_us);
+    write_u64(os, hlc.logical); // widened to u64 on the wire; logical fits in 20 bits in memory
+}
+
+inline HlcTimestamp read_hlc(std::istream& is) {
+    HlcTimestamp hlc;
+    hlc.physical_us = read_u64(is);
+    hlc.logical = static_cast<std::uint32_t>(read_u64(is));
+    return hlc;
 }
 
 } // namespace chronicle::io

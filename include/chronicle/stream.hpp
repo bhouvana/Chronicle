@@ -89,12 +89,18 @@ public:
     // or every plain assignment would misleadingly report this line inside
     // stream.hpp instead of "unknown."
     void record(T value, std::source_location call_site = std::source_location::current()) {
+        // docs/adr/0019-hybrid-logical-clock.md: one branch when disabled
+        // (the default) -- same cost model already measured negligible for
+        // RecordHook's null check above. The atomic CAS loop only runs for
+        // sessions that opted in.
+        HlcTimestamp const hlc = session_.config().causal_clock ? session_.next_hlc_tick() : HlcTimestamp{};
         Event<T> event{
             std::move(value),
             next_version_.fetch_add(1, std::memory_order_relaxed),
             std::chrono::steady_clock::now(),
             std::this_thread::get_id(),
             call_site,
+            hlc,
         };
 
         if (record_hook_ != nullptr) {
@@ -173,6 +179,43 @@ public:
         for (auto const& event : log_) {
             if (event.version > version) break;
             result = Snapshot<T>{event.value, event.version, event.timestamp};
+        }
+        return result;
+    }
+
+    // docs/adr/0019-hybrid-logical-clock.md: unlike snapshot_at_version(),
+    // meaningfully comparable *across different Stream<T>/Stream<U>
+    // instances* sharing the same Session -- the actual cross-stream
+    // capability version numbers cannot provide. Requires
+    // Session::Config::causal_clock; events recorded before it was enabled
+    // (or on a stream from a session that never enabled it) have hlc ==
+    // HlcTimestamp{}, which never satisfies is_known() and is skipped.
+    //
+    // Deliberately a full scan, not an early-break loop like the other
+    // snapshot_at*() methods above: computing this event's hlc and this
+    // event's version are two separate operations (an atomic CAS on the
+    // session's shared clock, then a fetch_add on this stream's own
+    // version counter), not one atomic step. Under concurrent producers,
+    // a thread can be preempted between the two, so a later-versioned
+    // event can carry an *earlier* hlc than one that got its version
+    // first -- log_ staying version-sorted (ADR 0009) does not guarantee
+    // it stays hlc-sorted too. A full scan tracking the best-qualifying
+    // event so far is correct regardless of that ordering; an early-break
+    // loop here would not be. This is a cold query path, not record()'s
+    // hot one, so the O(n) cost is the right trade for correctness.
+    [[nodiscard]] std::optional<Snapshot<T>> snapshot_at_hlc(HlcTimestamp target) const {
+        drain_impl();
+        std::lock_guard<std::mutex> lock(log_mutex_);
+        std::optional<Snapshot<T>> result;
+        HlcTimestamp best{};
+        for (auto const& event : log_) {
+            if (!is_known(event.hlc) || target < event.hlc) {
+                continue;
+            }
+            if (!result.has_value() || best < event.hlc) {
+                best = event.hlc;
+                result = Snapshot<T>{event.value, event.version, event.timestamp};
+            }
         }
         return result;
     }

@@ -81,7 +81,8 @@ public:
         auto const hx = stream->history();
         write_u64(out, hx.size());
         for (auto const& record : hx) {
-            write_event_header(out, record.version, record.timestamp, record.thread_id, record.call_site);
+            write_event_header(out, record.version, record.timestamp, record.thread_id, record.call_site,
+                                record.hlc);
             WireCodec<T>::write(out, record.value);
         }
     }
@@ -98,7 +99,8 @@ public:
         auto const hx = stream->history();
         write_u64(out, hx.size());
         for (auto const& record : hx) {
-            write_event_header(out, record.version, record.timestamp, record.thread_id, record.call_site);
+            write_event_header(out, record.version, record.timestamp, record.thread_id, record.call_site,
+                                record.hlc);
             write_u8(out, static_cast<std::uint8_t>(record.value.kind));
             WireCodec<std::size_t>::write(out, record.value.index);
             WireCodec<T>::write(out, record.value.value);
@@ -117,7 +119,8 @@ public:
         auto const hx = stream->history();
         write_u64(out, hx.size());
         for (auto const& record : hx) {
-            write_event_header(out, record.version, record.timestamp, record.thread_id, record.call_site);
+            write_event_header(out, record.version, record.timestamp, record.thread_id, record.call_site,
+                                record.hlc);
             write_u8(out, static_cast<std::uint8_t>(record.value.kind));
             WireCodec<K>::write(out, record.value.key);
             WireCodec<V>::write(out, record.value.value);
@@ -132,11 +135,12 @@ private:
 
     void write_event_header(std::ostream& out, std::uint64_t version,
                              std::chrono::steady_clock::time_point timestamp, std::thread::id thread_id,
-                             std::source_location const& call_site) {
+                             std::source_location const& call_site, HlcTimestamp const& hlc) {
         write_u64(out, version);
         write_i64(out, elapsed_ns(timestamp, start_));
         write_u64(out, thread_hash(thread_id));
         write_call_site(out, call_site);
+        write_hlc(out, hlc);
     }
 
     std::ostream& os_;

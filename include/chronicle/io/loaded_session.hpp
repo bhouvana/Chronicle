@@ -36,6 +36,7 @@ struct LoadedEvent {
     WireValue key_or_index;                            // meaningful for IndexedOp/KeyedOp only
     WireValue value;
     CallSiteInfo call_site; // call_site.known() == false for plain `field = value` assignment
+    HlcTimestamp hlc;       // is_known(hlc) == false unless the producing Session opted in (ADR 0019)
 };
 
 struct LoadedStream {
@@ -84,6 +85,7 @@ namespace detail {
             event.elapsed_ns = read_i64(is);
             event.thread_hash = read_u64(is);
             event.call_site = read_call_site(is);
+            event.hlc = read_hlc(is);
             if (stream.shape == StreamShape::Scalar) {
                 event.value = read_wire_value(is);
             } else {

@@ -1,11 +1,13 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "chronicle/fwd.hpp"
+#include "chronicle/hlc.hpp"
 #include "chronicle/retention.hpp"
 
 // docs/05-architecture.md: a Session "owns a group of StateStreams and their
@@ -34,6 +36,12 @@ public:
         RetentionPolicy retention = RetentionPolicy::ring_window(1024);
         OverflowPolicy overflow = OverflowPolicy::DropOldest;
         std::size_t snapshot_interval = 64;
+        // docs/adr/0019-hybrid-logical-clock.md: off by default -- a real,
+        // measured cost (an atomic CAS loop) on the record() hot path when
+        // enabled, so opt-in rather than always-on, same "opt-in for
+        // anything with new cost" pattern as every other v0.5+ addition
+        // (Stream<T>::RecordHook, compression, the EnTT adapter).
+        bool causal_clock = false;
     };
 
     Session() : Session(Config{}) {}
@@ -55,6 +63,18 @@ public:
     template <typename T>
     Stream<T>& create_stream(std::string name);
 
+    // One HLC shared by every Stream<T> this Session owns (docs/adr/0019):
+    // scoped per-Session, not global, so unrelated Sessions never contend
+    // on the same atomic, and so a fresh Session's HLC always starts at a
+    // predictable {0, 0} state -- Stream<T>::record() calls this only when
+    // config_.causal_clock is true.
+    [[nodiscard]] HlcTimestamp next_hlc_tick() {
+        auto const physical_us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - start_)
+                                      .count();
+        return hlc_.tick(static_cast<std::uint64_t>(physical_us));
+    }
+
     // Drains every stream owned by this session (see docs/rfc/0001's
     // "manual drain, decoupled from concurrency complexity" decision).
     void drain_all() {
@@ -69,6 +89,7 @@ private:
     Config config_;
     std::chrono::steady_clock::time_point start_;
     std::vector<std::unique_ptr<StreamBase>> streams_;
+    HybridLogicalClock hlc_;
 };
 
 } // namespace chronicle

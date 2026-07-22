@@ -7,6 +7,7 @@ add_executable(chronicle-core-tests
     concurrency_test.cpp
     call_site_test.cpp
     tracked_type_test.cpp
+    hlc_test.cpp
 )
 target_link_libraries(chronicle-core-tests PRIVATE chronicle::core)
 target_include_directories(chronicle-core-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

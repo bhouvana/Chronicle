@@ -128,6 +128,19 @@ template <typename T>
     return std::nullopt;
 }
 
+// docs/adr/0019-hybrid-logical-clock.md's v2.0 cross-stream query: unlike
+// snapshot_at_version(), `target` may come from a *different* tracked<T>/
+// tracked_vector<T>/tracked_map<K,V>'s HistoryRecord -- e.g. "what was
+// player.health when player.position last changed" -- as long as both
+// belong to the same Session with Config::causal_clock enabled.
+template <typename T>
+[[nodiscard]] std::optional<Snapshot<T>> snapshot_at_hlc(tracked<T> const& field, HlcTimestamp target) {
+    if (auto* stream = field.stream()) {
+        return stream->snapshot_at_hlc(target);
+    }
+    return std::nullopt;
+}
+
 template <typename T>
 [[nodiscard]] std::uint64_t current_version(tracked<T> const& field) {
     auto* stream = field.stream();
