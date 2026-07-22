@@ -157,7 +157,7 @@ lock-free per-thread ring buffer the architecture always specified.
   "add an attribute" (the codegen tool has landed); causal-chain queries and the
   Tracy bridge are both independently useful today. **v0.5 is now fully shipped.**
 
-## v1.0 — "Production-ready core + interactive viewer" — IN PROGRESS
+## v1.0 — "Production-ready core + interactive viewer" — SHIPPED
 - [x] Interactive browser viewer: `chronicle-cli serve <file> [--port N]` (`tools/cli/serve.cpp`,
   opt-in via `find_package(httplib CONFIG)`) serves the existing scrubber/event-log viewer
   (reusing the static export's `session_to_json()`/JS renderer verbatim — zero duplicated
@@ -211,9 +211,22 @@ lock-free per-thread ring buffer the architecture always specified.
   step of both workflows (this gate and a separate `ci.yml` build+test matrix across
   windows-msvc/ubuntu-gcc/ubuntu-clang) was run locally against a clean build directory
   before pushing, including deliberately injecting a fake 500ns/op regression to confirm
-  the gate actually fails when it should, not just passes when nothing's wrong. See
-  [ADR 0017](adr/0017-ci-performance-gate.md).
-- Stability commitment: public API (Phase 7 surface) enters semver-stable status.
+  the gate actually fails when it should, not just passes when nothing's wrong. Local
+  rehearsal wasn't the whole story: the first real push surfaced two genuine bugs neither
+  local run had hit — a sub-nanosecond-noise false regression (fixed with a `--min-ns`
+  floor) and a real cross-platform CMake bug (`ubuntu-latest`'s *system* zstd CMake
+  package satisfies `find_package()` but doesn't define vcpkg's `zstd::libzstd` target,
+  now guarded with an explicit `TARGET` check everywhere this project does an opt-in
+  `find_package()`). See [ADR 0017](adr/0017-ci-performance-gate.md).
+- [x] Stability commitment: public API (Phase 7 surface) enters semver-stable status.
+  Scoped explicitly: everything reachable from `#include <chronicle/chronicle.hpp>`
+  (`tracked<T>`, `tracked_vector<T>`, `tracked_map<K,V>`, `Session`, `Stream<T>`, the
+  `track()`/`history()`/`snapshot()`/`diff()`/`last_writer()` free-function families,
+  `CHRONICLE_TRACK_TYPE`) follows semver from here on; the on-disk wire format keeps its
+  own independent `kFormatVersion` (already bumped three times, explicitly *not* implied
+  stable by this commitment) and the newer opt-in modules (Tracy, Zstd, EnTT, the viewer's
+  JSON API) get a best-effort promise rather than full semver until they've had a release
+  cycle's worth of real exposure. See [ADR 0018](adr/0018-v1-api-stability-commitment.md).
 - **Standalone value**: the "no-compromise daily driver" milestone — safe to
   recommend for real production debugging workflows, not just prototyping.
 - **Note**: version numbering is illustrative of *sequence*, not a fixed calendar —
