@@ -18,6 +18,16 @@ path) -- not a substitute for bench/RESULTS.md's own honest, human-reviewed
 comparisons for anything subtler. Revisit once a CI-native baseline
 (captured on the runner itself, across several runs) exists to compare
 against instead of a dev-machine one.
+
+`--min-ns` (default 5.0) is a second, necessary guard found by actually
+running this gate on GitHub's own runners (not anticipated in advance):
+`untracked_assignment`'s baseline is 0.25 ns/op -- so close to zero that it
+mostly measures steady_clock's resolution, not real work. The first real CI
+run swung to 0.70 ns/op there, a "+178%" delta that FAILED the gate despite
+being a sub-nanosecond difference no one could act on. Percentage tolerance
+alone breaks down at magnitudes this close to the measurement floor: any
+benchmark whose baseline is below `--min-ns` is reported but never flagged
+as a regression, regardless of its percentage delta.
 """
 
 import argparse
@@ -35,6 +45,13 @@ def main() -> int:
         default=1.0,
         help="fraction slower than baseline allowed before failing (default 1.0 = 100%% = 2x)",
     )
+    parser.add_argument(
+        "--min-ns",
+        type=float,
+        default=5.0,
+        help="baselines below this (ns/op) are reported but never flagged as a regression -- "
+        "too close to timer resolution for a percentage delta to mean anything (default 5.0)",
+    )
     args = parser.parse_args()
 
     with open(args.fresh, encoding="utf-8") as f:
@@ -51,10 +68,13 @@ def main() -> int:
             continue
         fresh_ns = fresh[key]
         delta = (fresh_ns - baseline_ns) / baseline_ns if baseline_ns > 0 else 0.0
+        below_floor = baseline_ns < args.min_ns
         flag = ""
-        if delta > args.tolerance:
+        if delta > args.tolerance and not below_floor:
             regressions.append((key, baseline_ns, fresh_ns, delta))
             flag = "  <-- REGRESSION"
+        elif delta > args.tolerance and below_floor:
+            flag = "  (below --min-ns floor, not flagged)"
         print(f"{key:<55} {baseline_ns:>12.2f} {fresh_ns:>12.2f} {delta:>+7.1%}{flag}")
 
     print()

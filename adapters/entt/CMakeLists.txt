@@ -3,10 +3,15 @@
 # adapter's whole reason for living in adapters/ rather than
 # include/chronicle/ is that it has a real external dependency
 # (docs/11-repository-structure-and-standards.md, docs/adr/0015-entt-adapter.md).
+# EnTT_FOUND alone isn't sufficient -- see tests/unit/CMakeLists.txt's
+# comment on the analogous Zstd check for why a TARGET guard is also
+# required (a real CI run found a same-named-but-incompatible system
+# package for a different dependency this way; see
+# docs/adr/0017-ci-performance-gate.md).
 find_package(EnTT CONFIG QUIET)
 
-if(NOT EnTT_FOUND)
-    message(STATUS "chronicle-adapter-entt: EnTT CMake package not found, skipping (set CMAKE_PREFIX_PATH to an EnTT install to enable)")
+if(NOT EnTT_FOUND OR NOT TARGET EnTT::EnTT)
+    message(STATUS "chronicle-adapter-entt: no compatible EnTT CMake package found, skipping (set CMAKE_PREFIX_PATH to an EnTT install to enable)")
     return()
 endif()
 

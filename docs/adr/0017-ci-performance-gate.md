@@ -74,6 +74,48 @@ data, +6% to +78% deltas, all under the 100% gate) and a real failure
 (an artificially injected 500ns/op regression correctly flagged and exited
 non-zero). All of this ran before any of it was pushed.
 
+### Real CI failures found, not just local simulation
+Local rehearsal (above) was not sufficient by itself — pushing this to
+GitHub for real immediately surfaced two genuine bugs neither local run had
+hit, both diagnosed from the actual runner logs (fetched via the GitHub API
+with a token, not guessed from local behavior):
+
+1. **`bench.yml` itself failed on its first real run.**
+   `untracked_assignment` (baseline 0.25 ns/op — a near-zero sanity check,
+   not a meaningful target) measured 0.70 ns/op on the runner: a "+178%"
+   delta that tripped the 100% gate despite being well under half a
+   nanosecond of absolute difference. Percentage tolerance breaks down
+   completely once a baseline is close to `steady_clock`'s effective
+   resolution — this wasn't anticipated when the tolerance was chosen
+   above, only found by actually running the gate. Fixed with a second
+   guard, `--min-ns` (default 5.0): baselines below it are reported but
+   never flagged as a regression, regardless of percentage delta. Verified
+   against the exact real failure data (0.25 → 0.70 fed back through the
+   fixed script) before re-pushing.
+2. **`ci.yml`'s `ubuntu-gcc`/`ubuntu-clang` jobs failed at CMake *configure*
+   time** (`windows-msvc` passed on the first try): `CMake Error ...
+   target_link_libraries: Target "chronicle-core-tests" links to:
+   zstd::libzstd ... but the target was not found`. `find_package(zstd
+   CONFIG QUIET)` succeeded on `ubuntu-latest` — a real *system* zstd CMake
+   package exists there — but that package does not define the
+   `zstd::libzstd` target, which is specifically vcpkg's port naming, not a
+   standard this project had verified held everywhere. Every `find_package
+   (... CONFIG QUIET)` / `*_FOUND` check in this codebase
+   (`tests/unit/CMakeLists.txt`, `tools/cli/CMakeLists.txt`,
+   `adapters/entt/CMakeLists.txt`, `examples/tracy/CMakeLists.txt`) was
+   audited and given a second `TARGET <namespaced-name>` guard alongside
+   the `*_FOUND` check — a same-named-but-differently-shaped package is a
+   real failure mode this project had simply never exercised before (every
+   prior verification of these opt-in paths used the same vcpkg install).
+   Re-verified locally afterward: the vcpkg happy path still finds and
+   links everything correctly (246/246 checks), and the default
+   no-dependency build is still unaffected (208/208 checks).
+
+Both fixes were pushed in a follow-up commit; re-running the workflows for
+real is what actually confirms this gate works, not the local rehearsal
+alone — recorded here as the concrete reason "verified locally first" and
+"verified for real in CI" are not the same claim.
+
 ## Consequences
 - Positive: a real, working, verified regression gate exists where none
   did before — catches the class of bug this project has already had
