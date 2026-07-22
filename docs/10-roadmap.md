@@ -234,7 +234,20 @@ lock-free per-thread ring buffer the architecture always specified.
   standalone value has been validated by real usage/feedback, not by a schedule.
 
 ## v2.0 — "Ecosystem & advanced replay" — IN PROGRESS
-- PMR allocator/arena adapter.
+- [x] PMR allocator/arena adapter: `chronicle::TrackedMemoryResource` (`include/chronicle/
+  tracked_memory_resource.hpp`) wraps a `std::pmr::memory_resource`, recording every
+  allocate/deallocate as a `MapOp<address, size>` event — reusing `tracked_map<K,V>`'s exact
+  wire shape a second time (first for the EnTT adapter, [ADR 0015](adr/0015-entt-adapter.md)),
+  so `chronicle-cli`/the viewers again needed **zero changes**. Corrects docs/11's original
+  `adapters/allocator/` placement: `<memory_resource>` is standard library, not an external
+  dependency, so — applying [ADR 0006](adr/0006-container-tracking-lives-in-core-not-adapters.md)'s
+  own precedent — this lives in `include/chronicle/` and ships with chronicle-core, no opt-in
+  build flag needed, unlike every other adapter this project has built. Verified against real
+  `std::pmr::vector<int>` allocations, not a mock: a deliberate `reserve()`-forced reallocation
+  correctly recorded `insert[new 1024-byte address]` immediately followed by
+  `erase[old 16-byte address]`, matching `std::vector`'s actual grow-then-free order exactly,
+  end-to-end through `chronicle-cli history` with real heap addresses and call sites. See
+  [ADR 0021](adr/0021-pmr-allocator-adapter.md).
 - VS Code extension.
 - [x] Perfetto export bridge: `chronicle-cli export --perfetto <file> <output.json>` emits the
   legacy Chrome JSON Trace Event Format (a bare JSON array, verified directly against Perfetto's

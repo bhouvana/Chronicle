@@ -18,14 +18,17 @@ chronicle/
 ├── include/chronicle/           # chronicle-core public headers (header-only for v0.1-v0.2:
 │                                 # tracked<T>, tracked_vector<T>/tracked_map<K,V> included --
 │                                 # see ADR 0006, dependency-free STL container tracking lives
-│                                 # here, not under adapters/, because it has nothing to opt out of
+│                                 # here, not under adapters/, because it has nothing to opt out of.
+│                                 # tracked_memory_resource.hpp (PMR allocator adapter, v2.0) also
+│                                 # lives here for the same reason -- <memory_resource> is standard
+│                                 # library, not an external dependency; see ADR 0021, which corrects
+│                                 # this entry's original "adapters/allocator/" placement below
 │   └── io/                      # opt-in on-disk format: wire.hpp, format.hpp, session_writer.hpp,
 │                                 # loaded_session.hpp -- plain function templates, not virtual
 │                                 # dispatch on StreamBase (ADR 0008); not pulled in by chronicle.hpp
 ├── src/                         # chronicle-core implementation (non-header-only parts)
 ├── adapters/                    # reserved for adapters with a real external dependency
-│   ├── entt/                    # chronicle-adapter-entt (v1.0)
-│   └── allocator/               # chronicle-adapter-allocator (v2.0)
+│   └── entt/                    # chronicle-adapter-entt (v1.0)
 ├── tools/
 │   ├── cli/                     # chronicle-cli (v0.2, shipped -- list/history/diff; ADR 0005, ADR 0008)
 │   ├── codegen/                 # Clang-based registration generator (v0.5+)

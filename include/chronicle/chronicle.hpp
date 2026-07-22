@@ -18,5 +18,6 @@
 #include "chronicle/timeline.hpp"
 #include "chronicle/tracked.hpp"
 #include "chronicle/tracked_map.hpp"
+#include "chronicle/tracked_memory_resource.hpp"
 #include "chronicle/tracked_type.hpp"
 #include "chronicle/tracked_vector.hpp"

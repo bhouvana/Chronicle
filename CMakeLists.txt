@@ -40,6 +40,7 @@ if(CHRONICLE_BUILD_EXAMPLES)
     add_subdirectory(examples/container)
     add_subdirectory(examples/map)
     add_subdirectory(examples/export)
+    add_subdirectory(examples/allocator)
 endif()
 
 if(CHRONICLE_BUILD_BENCH)
