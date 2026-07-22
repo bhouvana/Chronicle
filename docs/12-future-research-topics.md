@@ -16,6 +16,91 @@ by it; (c) accept permanent best-effort status and invest instead in surfacing
 precision. No architectural commitment should be made that forecloses any of these
 three.
 
+### v2.0 research spike findings (docs/10-roadmap.md's v2.0 item — evaluated, not
+### pre-committed, per that item's own framing)
+
+This spike is grounded in direct, first-hand evidence from work already shipped
+this cycle, not speculation — each candidate below is assessed against something
+this project actually built and measured, not a hypothetical.
+
+**(a) Global happens-before graph via lightweight clocks — partially built, and
+the evidence argues against going further.** [ADR 0019](adr/0019-hybrid-logical-clock.md)
+implemented exactly this idea, deliberately scoped down to the smallest useful
+slice: a single, opt-in, *pairwise*-comparable ordinal shared across a
+`Session`'s streams — not a full vector clock, not a happens-before graph, no
+cross-thread causal claims at all beyond "these two timestamps have a total
+order." Even that minimal slice cost a real, measured **~30-50% per-event
+overhead** when enabled (`bench/RESULTS.md`), and needed a genuine correctness
+fix mid-implementation (`snapshot_at_hlc()`'s early-break-loop bug, found by
+reasoning through a concurrent interleaving, not by inspection) to avoid
+silently wrong answers under real contention. A *full* vector-clock graph —
+one entry per thread, updated and compared across arbitrary numbers of
+streams, with actual happens-before edges instead of one flat ordinal — would
+multiply both costs substantially: more per-event bookkeeping, more state to
+keep coherent under concurrent writers, and a query surface (walking a graph,
+not comparing two integers) with materially more surface area for the same
+class of interleaving bug ADR 0009 already found twice in something far
+simpler (a ring buffer) and ADR 0019 found once more in the HLC's own query
+path. **Not recommended as a v3 commitment**: the cost curve from the one
+data point this project actually has scales the wrong way for the marginal
+value — Chronicle's actual users (docs/02's audience) query "what changed
+and why," which the existing per-stream ordering plus the HLC's cross-stream
+ordinal already answers for the overwhelming majority of real questions;
+a full causal graph mainly helps answer "was there a race here," which
+candidate (c) below can address more cheaply.
+
+**(b) rr-style deterministic scheduler underneath Chronicle — not attempted,
+and the reason is architectural, not effort.** This isn't a "haven't gotten
+to it yet" gap: it conflicts with a foundational choice this project made
+before v0.1 shipped. [03-core-idea-and-feasibility.md](03-core-idea-and-feasibility.md)
+and [04-technical-limitations.md](04-technical-limitations.md) both concluded
+that raw-memory/DBI-level instrumentation (the same *class* of mechanism
+rr's deterministic replay needs — ptrace-based syscall interception,
+instruction-level determinism) is explicitly out of Chronicle's model:
+Chronicle instruments at the *source/API* level (`tracked<T>`, adapters),
+never below it. Layering rr-class determinism "underneath" would mean
+either depending on rr itself (Linux-only, a large, separate, mature
+project this codebase has no reason to absorb) or reimplementing a
+meaningful fraction of it — a different project's worth of scope, not a
+Chronicle feature. **Not recommended**: this remains correctly parked as
+"a separate tool that could be used *alongside* Chronicle," per docs/02's
+original competitive positioning, not something Chronicle itself should
+build.
+
+**(c) Permanent best-effort status + flag apparent races — the recommended
+path, and now cheaper to build than it was when this document was first
+written.** [ADR 0003](adr/0003-causal-not-global-ordering.md) already
+committed to best-effort cross-stream ordering as the permanent model, not
+a stepping stone — this spike's findings support keeping that, not
+revisiting it. What's new since ADR 0003: the HLC (ADR 0019) that now
+exists specifically *because* this spike needed a real primitive to
+evaluate (a) against gives (c) a concrete, low-cost mechanism it didn't
+have before — two events on different threads whose HLCs are close
+together with no established same-thread program-order relationship are
+exactly the shape of "apparent race" (c) called for flagging, and the
+`HlcTimestamp` comparison this already needs is the *same* comparison
+`snapshot_at_hlc()` already does, not new machinery. **Concrete, real
+follow-up** (not attempted in this spike, since the roadmap item is
+explicitly "evaluated... not pre-committed," and this is genuinely new
+scope beyond evaluation): a query like `chronicle::possible_race(event_a,
+event_b)` returning true when two events' HLCs are within some configurable
+window and their threads differ, usable by the interactive viewer
+([ADR 0016](adr/0016-interactive-browser-viewer.md)) to annotate a
+cross-stream query result as "these may have raced" instead of presenting
+a single false-confident answer. Left as a real, scoped, cheap next step
+for whenever it's prioritized — not spun into a v3 commitment by this
+spike, per the roadmap's own instruction.
+
+**Bottom line**: no v3 commitment to full deterministic replay. The
+evidence this project has actually collected — two real concurrency bugs
+found the hard way in the ring buffer, a correctness bug found while
+building even the smallest useful slice of approach (a), and a foundational
+architectural conflict with approach (b) — argues for staying with (c),
+now backed by a genuine, working, but *narrow* primitive (the HLC) rather
+than pursuing the two approaches that would require an order of magnitude
+more complexity for audiences (docs/02) this project isn't primarily built
+for.
+
 ## 2. C++26 static reflection (P2996) adoption path
 Once compilers ship P2996, Chronicle's manual-registration and Clang-codegen paths
 (Phase 4/7) could both be superseded by genuinely automatic field discovery.

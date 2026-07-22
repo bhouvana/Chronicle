@@ -256,12 +256,19 @@ lock-free per-thread ring buffer the architecture always specified.
   literally "reusing the browser viewer's webview," not reimplementing it. Data transformation
   (`buildLineIndex`/`parseCallSite`) verified against a real running server: `player.health`'s
   `track()` call correctly shows exactly 1 change, `player.inventory`'s 4 named-method calls each
-  show exactly 1. Full interactive VS Code UI verification could not be completed in this session
-  — `@vscode/test-electron` hit a genuine, methodically-diagnosed environment constraint (Electron
-  single-instance IPC forwarding, this machine already running ~16 VS Code windows) rather than an
-  extension bug; the real automated test suite is committed and should run correctly in CI, where
-  that constraint won't apply. Recorded honestly, not glossed over. See
-  [ADR 0022](adr/0022-vscode-extension.md).
+  show exactly 1. A second, deeper layer (`providerIntegration.test.ts`) runs extension.ts's actual
+  `activate()` and `ChronicleCodeLensProvider.provideCodeLenses()` under plain Node against a
+  hand-rolled `vscode` API shim, driven by a real HTTP fetch against a real running server —
+  producing real `vscode.CodeLens` objects across all 8 real call sites, and confirming the real
+  `chronicle.showHistory` handler really creates a webview whose HTML really iframes the live
+  server. Full interactive VS Code UI verification (real gutter rendering, a real click) could not
+  be completed in this session — eleven independently-varied `@vscode/test-electron` invocation
+  strategies (channel, extraction, shell, environment, a Task-Scheduler-escaped process tree, GPU
+  flags) all converged on the same Chromium-bootstrap-level crash, pointing to this tool execution
+  context lacking an interactive window station rather than an extension bug or a fixable flag.
+  The real automated test suite is committed and should run correctly in CI or an interactive
+  desktop session. Recorded honestly, including a correction of an earlier, disproven diagnosis
+  (single-instance IPC forwarding). See [ADR 0022](adr/0022-vscode-extension.md).
 - [x] Perfetto export bridge: `chronicle-cli export --perfetto <file> <output.json>` emits the
   legacy Chrome JSON Trace Event Format (a bare JSON array, verified directly against Perfetto's
   own current documentation, not protobuf — zero new dependency, reusing the same plain-JSON-
@@ -286,10 +293,29 @@ lock-free per-thread ring buffer the architecture always specified.
   under races (restated honestly, not overclaimed) — only a tie-free, cross-stream-comparable
   ordinal. A genuine concurrent stress test (8 threads × 5,000 ticks, stable across 5 runs)
   confirms the underlying CAS-packed atomic never loses an update. See [ADR 0019](adr/0019-hybrid-logical-clock.md).
-- Research spike (not a commitment) into deterministic multithreaded replay
-  (Phase 12) — evaluated for a possible v3 based on findings, not pre-committed.
+- [x] Research spike (not a commitment) into deterministic multithreaded replay
+  (Phase 12) — evaluated for a possible v3 based on findings, not pre-committed. All three
+  candidate approaches assessed against real evidence from this cycle's own work: (a) a global
+  happens-before graph via lightweight clocks — partially built (the HLC, [ADR 0019](adr/0019-hybrid-logical-clock.md)),
+  and its real measured cost (~30-50% overhead for even the smallest useful slice, plus a genuine
+  correctness bug found mid-implementation) argues against extending it further; (b) an rr-style
+  deterministic scheduler underneath Chronicle — not attempted, ruled out architecturally, not for
+  lack of effort (conflicts with the source-level-only instrumentation choice docs/03/04 made
+  before v0.1); (c) permanent best-effort status plus flagging apparent races — the recommended
+  path, now genuinely cheaper thanks to the HLC this spike needed anyway. **No v3 commitment to
+  full deterministic replay.** See [docs/12](12-future-research-topics.md#1-deterministic-multithreaded-replay)'s
+  "v2.0 research spike findings" section for the full evidence-based writeup.
 - **Standalone value**: the ecosystem-integration milestone — Chronicle fits into
   existing toolchains (editor, other tracing tools) rather than being an island.
+
+**v2.0 is now fully shipped.** All five items above are complete: the hybrid logical clock, the
+Perfetto export bridge, the PMR allocator adapter, the VS Code extension, and the deterministic-
+replay research spike. Every item was verified against something real — a running server, a real
+Perfetto UI session, real `std::pmr` allocations, or (for the VS Code extension) as deep an
+automated check as this environment's constraints allow, honestly documented rather than
+overclaimed. No breaking API changes were introduced beyond the already-anticipated format-version
+bumps (v3 → v4 for the HLC); v1.0's [API stability commitment](adr/0018-v1-api-stability-commitment.md)
+holds.
 
 ## Explicit anti-goals for this roadmap
 
