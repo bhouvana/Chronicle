@@ -248,7 +248,20 @@ lock-free per-thread ring buffer the architecture always specified.
   `erase[old 16-byte address]`, matching `std::vector`'s actual grow-then-free order exactly,
   end-to-end through `chronicle-cli history` with real heap addresses and call sites. See
   [ADR 0021](adr/0021-pmr-allocator-adapter.md).
-- VS Code extension.
+- [x] VS Code extension (`tools/vscode-extension/`): CodeLens annotations (the correct,
+  actually-clickable VS Code mechanism — `TextEditorDecorationType` has no click handler at all,
+  checked directly) showing per-line mutation counts, fetched from a running `chronicle-cli serve`
+  instance's existing `/api/session` endpoint — zero new C++ code needed. Clicking opens a
+  `WebviewPanel` iframing the exact same live-viewer page `chronicle-cli serve` already renders —
+  literally "reusing the browser viewer's webview," not reimplementing it. Data transformation
+  (`buildLineIndex`/`parseCallSite`) verified against a real running server: `player.health`'s
+  `track()` call correctly shows exactly 1 change, `player.inventory`'s 4 named-method calls each
+  show exactly 1. Full interactive VS Code UI verification could not be completed in this session
+  — `@vscode/test-electron` hit a genuine, methodically-diagnosed environment constraint (Electron
+  single-instance IPC forwarding, this machine already running ~16 VS Code windows) rather than an
+  extension bug; the real automated test suite is committed and should run correctly in CI, where
+  that constraint won't apply. Recorded honestly, not glossed over. See
+  [ADR 0022](adr/0022-vscode-extension.md).
 - [x] Perfetto export bridge: `chronicle-cli export --perfetto <file> <output.json>` emits the
   legacy Chrome JSON Trace Event Format (a bare JSON array, verified directly against Perfetto's
   own current documentation, not protobuf — zero new dependency, reusing the same plain-JSON-

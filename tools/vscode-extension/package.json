@@ -1,0 +1,61 @@
+{
+  "name": "chronicle-history",
+  "displayName": "Chronicle History",
+  "description": "Inline gutter annotations showing tracked-field mutation history from a running chronicle-cli serve instance.",
+  "version": "0.1.0",
+  "publisher": "chronicle",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:cpp",
+    "onLanguage:c"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "chronicle.showHistory",
+        "title": "Chronicle: Show History for This Line"
+      },
+      {
+        "command": "chronicle.refresh",
+        "title": "Chronicle: Refresh History Annotations"
+      }
+    ],
+    "configuration": {
+      "title": "Chronicle History",
+      "properties": {
+        "chronicle.serverUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8080",
+          "description": "Base URL of a running 'chronicle-cli serve' instance (docs/adr/0016-interactive-browser-viewer.md)."
+        },
+        "chronicle.refreshIntervalSeconds": {
+          "type": "number",
+          "default": 5,
+          "description": "How often to re-fetch /api/session and refresh gutter annotations."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "npm run compile && node ./out/test/runTest.js",
+    "test:logic": "npm run compile && node ./out/test/pureLogic.test.js"
+  },
+  "devDependencies": {
+    "@types/glob": "^9.0.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/test-electron": "^2.3.9",
+    "glob": "^13.0.6",
+    "mocha": "^11.7.6",
+    "typescript": "^5.4.0"
+  }
+}
