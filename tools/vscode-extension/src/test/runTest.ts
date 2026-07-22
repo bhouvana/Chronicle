@@ -15,20 +15,19 @@ async function main(): Promise<void> {
     const extensionTestsPath = path.resolve(__dirname, './suite/index');
 
     await runTests({
-        // No workspace folder passed via CLI args at all: this VS Code
-        // version (1.129.1) mishandles a bare positional folder-path
-        // argument when combined with test-electron's launch flags --
-        // confirmed directly (reproduced identically against a fresh
-        // download, the already-installed system copy, and a manually
-        // flattened extraction; Code.exe's Electron main process treats
-        // the folder path as a CommonJS entry script to require(), not a
-        // folder to open). Not a real environment/corruption issue, and
-        // not this extension's bug either -- a genuine test-electron/VS
-        // Code version incompatibility, avoided entirely by never passing
-        // a folder path this way: extension.test.ts opens the target file
-        // directly via vscode.workspace.openTextDocument() and sets
-        // chronicle.serverUrl programmatically instead of relying on a
-        // workspace-scoped .vscode/settings.json.
+        // Originally set to target Insiders on the theory that Stable's
+        // single-instance lock was intercepting new launches. That theory
+        // is disproven (see docs/adr/0022-vscode-extension.md): a fresh,
+        // never-before-run Insiders build -- no competing instance to
+        // forward to -- failed identically. The real cause (established
+        // by eleven independently-varied invocation strategies, all
+        // converging on the same Chromium-bootstrap-level crash) appears
+        // to be that this tool's execution context has no interactive
+        // window station attached, which blocks any Electron GUI launch
+        // from here regardless of channel. Left targeting Insiders anyway
+        // since it's a reasonable default for whichever environment
+        // (CI, an interactive desktop session) eventually runs this.
+        version: 'insiders',
         extensionDevelopmentPath,
         extensionTestsPath,
         launchArgs: ['--disable-extensions'],

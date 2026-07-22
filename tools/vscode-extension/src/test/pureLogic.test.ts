@@ -1,14 +1,16 @@
 // Pure-logic verification, runnable with plain Node (no Electron, no VS
 // Code API) -- exists because @vscode/test-electron could not be driven
-// end-to-end in this environment: this machine already has ~16 real VS
-// Code windows open under the same user session, and Electron's
-// single-instance lock intercepts every new Code.exe launch attempt
-// regardless of --user-data-dir/install path (confirmed directly across a
-// fresh download, a manually-flattened extraction, and the system-
-// installed copy -- all three hit the *same* "bad option" forwarding
-// behavior, ruling out a corrupted download as the cause). Documented
-// honestly in docs/adr/0022-vscode-extension.md rather than claimed as
-// full UI-level verification this environment could not actually produce.
+// end-to-end in this environment: no Electron GUI process launched from
+// this tool's execution context (by any of eleven independently-varied
+// strategies -- see docs/adr/0022-vscode-extension.md's "Verification
+// performed, and its real limits" section for the full diagnosis) can
+// get past Chromium's earliest bootstrap phase, most likely because
+// nothing launched from here has access to an interactive window
+// station. Documented honestly in that ADR rather than claimed as full
+// UI-level verification this environment could not actually produce.
+// See also src/test/providerIntegration.test.ts, which goes further:
+// it runs extension.ts's real activate() and provideCodeLenses() against
+// a vscode API shim, not just this test's internal helper functions.
 //
 // This test exercises the exact same buildLineIndex()/parseCallSite()
 // logic extension.ts uses, against the real JSON a running chronicle-cli

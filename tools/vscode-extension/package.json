@@ -46,7 +46,8 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "test": "npm run compile && node ./out/test/runTest.js",
-    "test:logic": "npm run compile && node ./out/test/pureLogic.test.js"
+    "test:logic": "npm run compile && node ./out/test/pureLogic.test.js",
+    "test:provider": "tsc -p ./ && node -r ./out/test/registerShim.js ./out/test/providerIntegration.test.js http://127.0.0.1:8199"
   },
   "devDependencies": {
     "@types/glob": "^9.0.0",

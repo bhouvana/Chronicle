@@ -62,41 +62,123 @@ applied here to "don't disrupt the editor."
 
 ### Verification performed, and its real limits
 TypeScript compiles cleanly under `strict` mode with zero errors — real,
-not assumed. The core data transformation
-(`buildLineIndex`/`parseCallSite`) was verified against a **real, running**
-`chronicle-cli serve` instance serving `examples/export/demo.chronicle`:
-line 20 (`player.health`'s `track()` call) correctly reports exactly 1
-change (plain `health = 75` assignment can't capture a call site, ADR
-0010), and lines 27-30 (`player.inventory`'s `push_back()`/`update()`
-calls) each correctly report exactly 1 change — the exact expected mapping
-from real recorded data, not a hand-constructed fixture.
+not assumed.
+
+Two layers of real, passing, non-Electron verification exist:
+
+1. **`src/test/pureLogic.test.ts`**: the core data transformation
+   (`buildLineIndex`/`parseCallSite`) verified against a **real, running**
+   `chronicle-cli serve` instance serving `examples/export/demo.chronicle`:
+   line 20 (`player.health`'s `track()` call) correctly reports exactly 1
+   change (plain `health = 75` assignment can't capture a call site, ADR
+   0010), and lines 27-30 (`player.inventory`'s `push_back()`/`update()`
+   calls) each correctly report exactly 1 change.
+2. **`src/test/providerIntegration.test.ts`** (added after the single-
+   instance theory below was disproven): a hand-rolled `vscode` module
+   shim (`src/test/vscodeShim.ts` — real `Range`/`CodeLens`/`EventEmitter`
+   classes matching the actual API shape, plus recording stand-ins for
+   `languages.registerCodeLensProvider`/`commands.registerCommand`/
+   `window.createWebviewPanel`) is spliced in for `require('vscode')` via
+   a `Module._resolveFilename` hook (`src/test/registerShim.ts`), and
+   extension.ts's **actual compiled `activate()`** — the real VS Code
+   entry point, unmodified — is required and run under plain Node against
+   it. This is strictly deeper than (1): it exercises the real
+   `ChronicleCodeLensProvider.provideCodeLenses()` method (not just its
+   internal helpers), producing real `vscode.CodeLens`/`vscode.Range`
+   objects, via a real HTTP fetch against the real running server
+   (verified against the complete real dataset — 8 call sites across
+   `player.health`, `player.inventory`, and `match.scores`, not the
+   partial set (1) checked) — and it invokes the real registered
+   `chronicle.showHistory` command handler, confirming it really creates
+   a webview panel whose HTML really contains
+   `<iframe src="{serverUrl}/">`. What this still doesn't verify: VS
+   Code's own rendering of a CodeLens as clickable text in a real gutter,
+   and a real click actually invoking the command through VS Code's own
+   dispatch — the boundary this shim can't cross is real GUI rendering
+   and real user-input dispatch, not the extension's own logic.
 
 **Full VS Code UI-level verification (CodeLens actually rendering, the
 webview actually opening) could not be completed in this environment**,
-and this is recorded honestly rather than glossed over: `@vscode/test-
-electron` (the official framework for this) failed identically across
-three independent invocation strategies — a freshly-downloaded isolated
-VS Code build, a manually-corrected extraction of that same build, and
-the already-installed system VS Code — all three rejecting every launch
-flag (including VS Code's own always-valid `--extensionDevelopmentPath`,
-tested completely in isolation with no other flags) as "bad option."
-This is Electron's single-instance IPC forwarding: this development
-machine already has roughly 16 real VS Code windows open under the same
-user session, and any new `Code.exe` launch — regardless of install path
-or `--user-data-dir` — gets forwarded to one of those already-running
-processes' restricted second-instance argument handler, which doesn't
-understand extension-test-host flags. Confirmed methodically, not
-assumed: the identical failure across three unrelated binaries rules out
-a corrupted download as the cause. The fix (closing the user's existing
-VS Code windows to free the singleton lock) was not taken — that's a
-disruptive action affecting the user's own active work, well outside
-this task's authorization. `src/test/extension.test.ts`
-(the real `@vscode/test-electron` suite, asserting on
-`vscode.executeCodeLensProvider`'s actual output against the real API) is
-committed as-is and should run correctly in a normal CI environment with
-no competing VS Code instances — a real follow-up, not attempted here to
-keep this ADR's claims limited to what was actually verified in this
-session.
+and — after a second, much more thorough round of investigation
+prompted directly by being told "there must be some other way" — the
+original diagnosis below turned out to be wrong, and is corrected here
+rather than left standing.
+
+**What was originally suspected (single-instance IPC forwarding), and
+why it's now known to be incorrect**: the first investigation attributed
+the failure to Electron's single-instance lock, since this development
+machine already had roughly 16 real VS Code Stable windows open under
+the same user session. That theory made one falsifiable prediction: VS
+Code **Insiders** maintains its own independent single-instance lock
+from Stable by design, so launching Insiders (with zero other Insiders
+processes running) should have sidestepped the problem entirely. It
+didn't — a freshly downloaded, never-before-run Insiders build failed
+with the identical "bad option" rejection for every flag, which rules
+out single-instance forwarding as the cause (there was no competing
+instance to forward to).
+
+**What the failure actually is, established by systematic elimination
+across eleven independent invocation strategies**, each changing exactly
+one variable at a time:
+- The initial "bad option" errors were traced to `ELECTRON_RUN_AS_NODE=1`
+  being present in this shell's inherited environment (this whole
+  session runs inside a VS Code extension host process, which sets this
+  for its own child processes) — stripping it made the "bad option"
+  errors disappear completely, replaced by a *different* failure: a
+  Chromium bootstrap crash, `[ERROR:base\i18n\icu_util.cc:232] Invalid
+  file descriptor to ICU data received`, exit code `0x80000003`
+  (`STATUS_BREAKPOINT` — a `CHECK()`-triggered fast-fail, not an
+  unhandled exception; confirmed by an empty Windows Application event
+  log for the same time window, ruling out Windows Error Reporting as a
+  further diagnostic source).
+- Explicitly re-setting `ELECTRON_RUN_AS_NODE=1` on a direct invocation
+  (bypassing `@vscode/test-electron` entirely) had **no effect** —
+  proof that this specific packaged VS Code build has Electron's
+  `runAsNode` fuse disabled (Microsoft ships official VS Code builds
+  this way as a hardening measure), which also retroactively explains
+  why the very first "bad option" messages were never really Node's own
+  CLI parser as first assumed, but VS Code's own native argument
+  validator producing similarly-worded output.
+- A fully clean environment (`env -i` with only the minimal variables a
+  Windows process needs — `PATH`, `SYSTEMROOT`, `TEMP`, etc., every
+  `VSCODE_*`/`ELECTRON_*`/`CHROME_CRASHPAD_PIPE_NAME` variable stripped)
+  produced the identical ICU crash — ruling out environment-variable
+  poisoning entirely, including a real candidate
+  (`CHROME_CRASHPAD_PIPE_NAME`, pointing at the *outer* VS Code
+  process's own crash-handler pipe).
+- Launching via Windows Task Scheduler (`schtasks /create` + `/run`) —
+  which creates a genuinely separate process tree, not a child of the
+  invoking shell at all, immune to any Windows Job Object the tool's own
+  shell processes might be confined to — produced the **identical**
+  crash. This rules out job-object/process-tree confinement as the
+  cause, and is the strongest evidence gathered: even a process with no
+  ancestry relationship to this session's shell fails identically.
+- `--disable-gpu --disable-software-rasterizer --disable-gpu-compositing`
+  and `ELECTRON_DISABLE_SANDBOX=1` (Electron's own native-code env var,
+  independent of CLI flag parsing) were both tried and had no effect;
+  the crash occurs in well under a second, consistent with a failure in
+  Chromium's earliest bootstrap phase (`icu_util.cc`), before any
+  GPU-specific work would begin.
+
+Eleven independently-varied invocation strategies (channel, download
+freshness, extraction method, shell, environment contents, process-tree
+ancestry, GPU flags, sandbox env vars) converge on the same failure at
+the same bootstrap point. The most coherent explanation consistent with
+*all* of this evidence — including Task Scheduler's default `/sc once`
+logon type running in Session 0, the same non-interactive session
+Windows services use, which has no interactive window station attached
+— is that no process launched from this tool's execution context, by
+any means tried, has access to an interactive window station, which
+Chromium's multi-process bootstrap (browser → GPU → renderer, with
+handles including the ICU data mapping duplicated across that boundary)
+depends on. This is a materially different, and more architecturally
+fundamental, claim than the original single-instance theory: it says no
+invocation strategy *from an automated tool context* can succeed here,
+not that a specific flag or channel was missing. `src/test/
+extension.test.ts` (the real `@vscode/test-electron` suite) is committed
+as-is and should run correctly in a normal CI environment or an
+interactive desktop session with no such constraint — a real follow-up,
+genuinely blocked here, not skipped.
 
 ## Consequences
 - Positive: zero new C++ code — this extension is a pure consumer of
