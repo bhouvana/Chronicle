@@ -1,0 +1,29 @@
+{
+  "_comment": "Seed data only, not an enforced CI gate yet -- see bench/RESULTS.md for caveats and methodology. Captured by actually running chronicle-bench, not projected.",
+  "captured_at": "2026-07-22",
+  "compiler": "Clang 21.1.6, -std=c++23 -O2, MSVC ABI (Windows)",
+  "implementation": "ADR 0009: lock-free per-thread ring buffer",
+  "environment": "developer workstation, single uncalibrated run",
+  "results_ns_per_op": {
+    "untracked_assignment": 0.25,
+    "tracked_assignment_ring_window_1024_single_threaded": 55.04,
+    "tracked_assignment_unbounded_single_threaded": 55.34,
+    "history_query_100000_events": 1472490.0,
+    "contended_record_1_thread_aggregate": 45.86,
+    "contended_record_2_threads_aggregate": 34.92,
+    "contended_record_4_threads_aggregate": 32.62,
+    "contended_record_8_threads_aggregate": 30.62
+  },
+  "previous_implementation_ADR_0004_mutex_staging_deque": {
+    "captured_at": "2026-07-22",
+    "untracked_assignment": 0.25,
+    "tracked_assignment_ring_window_1024": 42.69,
+    "tracked_assignment_unbounded": 43.99,
+    "history_query_100000_events": 1472931.0
+  },
+  "known_issues": [
+    "single-threaded tracked_assignment is ~10ns/op SLOWER than the old mutex-based implementation -- the thread_local lookup in ring_for_current_thread() has real cost; see bench/RESULTS.md's Interpretation section. The design's actual win is in the contended_record_* numbers, not the single-threaded ones.",
+    "contended_record_1_thread includes a concurrently-running drainer thread and is not directly comparable to the single-threaded numbers above",
+    "history_query results at small sizes (10, 1000 events) were noisy in prior measurement and are omitted here pending a better methodology; do not gate CI on them"
+  ]
+}

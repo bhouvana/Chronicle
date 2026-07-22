@@ -1,0 +1,309 @@
+// chronicle-cli: reads a .chronicle session file and answers "what
+// happened" from the command line -- the tool docs/08-visualization.md
+// calls the always-available, dependency-free tier, and the one
+// docs/adr/0005-cli-requires-on-disk-format.md moved to v0.2 once it had a
+// file format to actually read. Runs as a fully separate process from
+// whatever produced the file (docs/05-architecture.md's process-separation
+// rule) and links only against chronicle-core's io headers -- no knowledge
+// of the producer's original C++ types, only WireValues (see
+// chronicle/io/loaded_session.hpp).
+
+#include "html_export.hpp"
+#include "serve.hpp"
+#include "session_loader.hpp"
+
+#include <chronicle/io/loaded_session.hpp>
+
+#include <algorithm>
+#include <fstream>
+#include <iostream>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+using chronicle::ContainerOpKind;
+using namespace chronicle::io;
+using chronicle_cli::load_file;
+#ifdef CHRONICLE_CLI_HAVE_HTTPLIB
+using chronicle_cli::cmd_serve;
+#endif
+
+namespace {
+
+std::string shape_name(StreamShape s) {
+    switch (s) {
+        case StreamShape::Scalar: return "scalar";
+        case StreamShape::IndexedOp: return "indexed (vector)";
+        case StreamShape::KeyedOp: return "keyed (map)";
+    }
+    return "?";
+}
+
+std::string op_kind_name(ContainerOpKind k) {
+    switch (k) {
+        case ContainerOpKind::Insert: return "insert";
+        case ContainerOpKind::Erase: return "erase";
+        case ContainerOpKind::Update: return "update";
+        case ContainerOpKind::Clear: return "clear";
+    }
+    return "?";
+}
+
+int cmd_list(std::string const& path) {
+    auto const session = load_file(path);
+    for (auto const& stream : session.streams) {
+        std::cout << stream.name << "  [" << shape_name(stream.shape) << "]  "
+                  << stream.events.size() << " event(s)\n";
+    }
+    return 0;
+}
+
+// docs/10-roadmap.md's v0.5 causal-chain-queries item, surfaced in the CLI:
+// shows just the filename, not the full path, since the full path is where
+// the *producing machine's* build tree happened to be, rarely useful to a
+// reader on a different machine. call_site.known() == false for events
+// recorded via plain `field = value` (docs/adr/0010) -- shown as nothing
+// rather than a fabricated "unknown:0" that could be mistaken for real data.
+std::string call_site_suffix(CallSiteInfo const& call_site) {
+    if (!call_site.known()) {
+        return "";
+    }
+    auto const slash = call_site.file.find_last_of("/\\");
+    std::string const filename =
+        slash == std::string::npos ? call_site.file : call_site.file.substr(slash + 1);
+    return "  [" + filename + ":" + std::to_string(call_site.line) + "]";
+}
+
+void print_event(LoadedEvent const& event, StreamShape shape) {
+    std::cout << "  v" << event.version << " (+" << event.elapsed_ns << "ns): ";
+    if (shape == StreamShape::Scalar) {
+        std::cout << to_display_string(event.value);
+    } else {
+        std::cout << op_kind_name(event.op_kind) << "[" << to_display_string(event.key_or_index) << "]";
+        if (event.op_kind == ContainerOpKind::Insert || event.op_kind == ContainerOpKind::Update) {
+            std::cout << " = " << to_display_string(event.value);
+        }
+    }
+    std::cout << call_site_suffix(event.call_site) << "\n";
+}
+
+int cmd_history(std::string const& path, std::string const& stream_name) {
+    auto const session = load_file(path);
+    auto const* stream = session.find(stream_name);
+    if (stream == nullptr) {
+        std::cerr << "no such stream: " << stream_name << "\n";
+        return 1;
+    }
+    for (auto const& event : stream->events) {
+        print_event(event, stream->shape);
+    }
+    return 0;
+}
+
+// Generic replay for IndexedOp/KeyedOp shapes, folding LoadedEvents up to a
+// target version -- possible only because the wire vocabulary is small and
+// closed (wire.hpp); this cannot know what the *original* element type was,
+// only that (say) it was an Int64.
+std::vector<WireValue> replay_indexed(LoadedStream const& stream, std::uint64_t up_to_version) {
+    std::vector<WireValue> result;
+    for (auto const& event : stream.events) {
+        if (event.version > up_to_version) {
+            break;
+        }
+        auto const index = static_cast<std::size_t>(event.key_or_index.u);
+        switch (event.op_kind) {
+            case ContainerOpKind::Insert:
+                if (index >= result.size()) {
+                    result.push_back(event.value);
+                } else {
+                    result.insert(result.begin() + static_cast<std::ptrdiff_t>(index), event.value);
+                }
+                break;
+            case ContainerOpKind::Update:
+                if (index < result.size()) {
+                    result[index] = event.value;
+                }
+                break;
+            case ContainerOpKind::Erase:
+                if (index < result.size()) {
+                    result.erase(result.begin() + static_cast<std::ptrdiff_t>(index));
+                }
+                break;
+            case ContainerOpKind::Clear:
+                result.clear();
+                break;
+        }
+    }
+    return result;
+}
+
+std::vector<std::pair<WireValue, WireValue>> replay_keyed(LoadedStream const& stream,
+                                                            std::uint64_t up_to_version) {
+    std::vector<std::pair<WireValue, WireValue>> result;
+    auto find_key = [&](WireValue const& key) {
+        return std::find_if(result.begin(), result.end(),
+                             [&](auto const& kv) { return kv.first == key; });
+    };
+    for (auto const& event : stream.events) {
+        if (event.version > up_to_version) {
+            break;
+        }
+        switch (event.op_kind) {
+            case ContainerOpKind::Insert:
+            case ContainerOpKind::Update: {
+                auto it = find_key(event.key_or_index);
+                if (it != result.end()) {
+                    it->second = event.value;
+                } else {
+                    result.emplace_back(event.key_or_index, event.value);
+                }
+                break;
+            }
+            case ContainerOpKind::Erase: {
+                auto it = find_key(event.key_or_index);
+                if (it != result.end()) {
+                    result.erase(it);
+                }
+                break;
+            }
+            case ContainerOpKind::Clear:
+                result.clear();
+                break;
+        }
+    }
+    return result;
+}
+
+int cmd_diff(std::string const& path, std::string const& stream_name, std::uint64_t v0, std::uint64_t v1) {
+    auto const session = load_file(path);
+    auto const* stream = session.find(stream_name);
+    if (stream == nullptr) {
+        std::cerr << "no such stream: " << stream_name << "\n";
+        return 1;
+    }
+
+    if (stream->shape == StreamShape::Scalar) {
+        std::optional<WireValue> before, after;
+        for (auto const& event : stream->events) {
+            if (event.version <= v0) {
+                before = event.value;
+            }
+            if (event.version <= v1) {
+                after = event.value;
+            }
+        }
+        std::cout << "v" << v0 << ": " << (before ? to_display_string(*before) : "<none>") << "\n";
+        std::cout << "v" << v1 << ": " << (after ? to_display_string(*after) : "<none>") << "\n";
+        return 0;
+    }
+
+    if (stream->shape == StreamShape::IndexedOp) {
+        auto const a = replay_indexed(*stream, v0);
+        auto const b = replay_indexed(*stream, v1);
+        auto const common = std::min(a.size(), b.size());
+        for (std::size_t i = 0; i < common; ++i) {
+            if (a[i] != b[i]) {
+                std::cout << "  [" << i << "]: " << to_display_string(a[i]) << " -> "
+                          << to_display_string(b[i]) << "\n";
+            }
+        }
+        for (std::size_t i = common; i < b.size(); ++i) {
+            std::cout << "  [" << i << "]: (new) -> " << to_display_string(b[i]) << "\n";
+        }
+        for (std::size_t i = common; i < a.size(); ++i) {
+            std::cout << "  [" << i << "]: " << to_display_string(a[i]) << " -> (removed)\n";
+        }
+        return 0;
+    }
+
+    // KeyedOp
+    auto const a = replay_keyed(*stream, v0);
+    auto const b = replay_keyed(*stream, v1);
+    for (auto const& [key, value] : a) {
+        auto it = std::find_if(b.begin(), b.end(), [&](auto const& kv) { return kv.first == key; });
+        if (it == b.end()) {
+            std::cout << "  " << to_display_string(key) << ": " << to_display_string(value)
+                      << " -> (removed)\n";
+        } else if (it->second != value) {
+            std::cout << "  " << to_display_string(key) << ": " << to_display_string(value) << " -> "
+                      << to_display_string(it->second) << "\n";
+        }
+    }
+    for (auto const& [key, value] : b) {
+        auto it = std::find_if(a.begin(), a.end(), [&](auto const& kv) { return kv.first == key; });
+        if (it == a.end()) {
+            std::cout << "  " << to_display_string(key) << ": (new) -> " << to_display_string(value)
+                      << "\n";
+        }
+    }
+    return 0;
+}
+
+// docs/08-visualization.md tier 2: static, self-contained HTML timeline
+// viewer -- no server, shareable as a build/CI artifact. See html_export.cpp
+// for the page itself; this just wires the CLI to it.
+int cmd_export_html(std::string const& path, std::string const& output_path) {
+    auto const session = load_file(path);
+    std::ofstream out(output_path, std::ios::binary);
+    if (!out) {
+        throw std::runtime_error("cannot open output file: " + output_path);
+    }
+    chronicle_cli::write_html_export(session, out);
+    std::cout << "wrote " << output_path << " (" << session.streams.size() << " stream(s))\n";
+    return 0;
+}
+
+void print_usage() {
+    std::cout << "usage:\n"
+                 "  chronicle-cli list <file>\n"
+                 "  chronicle-cli history <file> <stream-name>\n"
+                 "  chronicle-cli diff <file> <stream-name> <version-a> <version-b>\n"
+                 "  chronicle-cli export --html <file> <output.html>\n"
+#ifdef CHRONICLE_CLI_HAVE_HTTPLIB
+                 "  chronicle-cli serve <file> [--port N]\n"
+#endif
+        ;
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    std::vector<std::string> const args(argv + 1, argv + argc);
+    try {
+        if (args.empty()) {
+            print_usage();
+            return 1;
+        }
+        if (args[0] == "list" && args.size() == 2) {
+            return cmd_list(args[1]);
+        }
+        if (args[0] == "history" && args.size() == 3) {
+            return cmd_history(args[1], args[2]);
+        }
+        if (args[0] == "diff" && args.size() == 5) {
+            return cmd_diff(args[1], args[2], std::stoull(args[3]), std::stoull(args[4]));
+        }
+        if (args[0] == "export" && args.size() == 4 && args[1] == "--html") {
+            return cmd_export_html(args[2], args[3]);
+        }
+#ifdef CHRONICLE_CLI_HAVE_HTTPLIB
+        if (args[0] == "serve" && (args.size() == 2 || args.size() == 4)) {
+            int port = 8080;
+            if (args.size() == 4) {
+                if (args[2] != "--port") {
+                    print_usage();
+                    return 1;
+                }
+                port = std::stoi(args[3]);
+            }
+            return cmd_serve(args[1], port);
+        }
+#endif
+        print_usage();
+        return 1;
+    } catch (std::exception const& e) {
+        std::cerr << "error: " << e.what() << "\n";
+        return 1;
+    }
+}
