@@ -197,11 +197,22 @@ lock-free per-thread ring buffer the architecture always specified.
   real `chronicle-cli` binary, not just a unit test: a 25,000-mutation session compressed
   to **11.7% of its original size (~8.5x)**, byte-identical content read back through both
   compressed and uncompressed files. LZ4 for live-stream compression is explicitly
-  deferred — no live-streaming transport exists yet for it to compress (that's part of
-  the still-pending interactive browser viewer below); a real follow-up, not attempted
-  speculatively. See [ADR 0014](adr/0014-storage-engine-compression.md).
-- CI performance-regression gate enforced on the benchmark suite (Phase 9)
-  as a hard merge requirement.
+  deferred — no live-streaming transport exists yet for it to compress (the interactive
+  browser viewer below ended up re-reading files on demand rather than building one either,
+  for the same reason); a real follow-up, not attempted speculatively. See
+  [ADR 0014](adr/0014-storage-engine-compression.md).
+- [x] CI performance-regression gate: `chronicle-bench --json` (a new machine-readable
+  output mode) + `bench/compare_baseline.py`, wired into `.github/workflows/bench.yml`
+  on every push/PR to `main`. Tolerance is a deliberately loose 100% (fails only past 2x
+  slower than `bench/baseline.json`), derived directly from this project's own measured
+  noise floor — the same ~30-50% run-to-run swings `bench/RESULTS.md`'s Tracy-bridge A/B
+  test already found on a *single* dev machine, which a CI runner (typically noisier, and
+  a *different* machine than the baseline was captured on) would only make worse. Every
+  step of both workflows (this gate and a separate `ci.yml` build+test matrix across
+  windows-msvc/ubuntu-gcc/ubuntu-clang) was run locally against a clean build directory
+  before pushing, including deliberately injecting a fake 500ns/op regression to confirm
+  the gate actually fails when it should, not just passes when nothing's wrong. See
+  [ADR 0017](adr/0017-ci-performance-gate.md).
 - Stability commitment: public API (Phase 7 surface) enters semver-stable status.
 - **Standalone value**: the "no-compromise daily driver" milestone — safe to
   recommend for real production debugging workflows, not just prototyping.

@@ -9,6 +9,12 @@
 // the actual win only shows up under real concurrent contention (the
 // bench_contended_multithreaded* benchmarks), which the mutex-based design
 // could never have measured well in the first place.
+//
+// `--json`: machine-readable output for bench/compare_baseline.py
+// (docs/10-roadmap.md's v1.0 CI performance-regression gate). Keys match
+// bench/baseline.json's `results_ns_per_op` exactly -- both sides of that
+// comparison were written to agree on names, not reconciled after the
+// fact.
 
 #include <algorithm>
 #include <atomic>
@@ -16,6 +22,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstddef>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -45,17 +52,23 @@ double time_ns_per_op(std::size_t iterations, F&& f) {
     return total_ns / static_cast<double>(iterations);
 }
 
-void bench_untracked_assignment() {
+struct BenchResult {
+    std::string key;   // bench/baseline.json's results_ns_per_op key
+    std::string label; // human-readable table row label
+    double ns_per_op;
+};
+
+BenchResult bench_untracked_assignment() {
     chronicle::tracked<int> value{0};
     int counter = 0;
     double const ns = time_ns_per_op(1'000'000, [&] {
         value = counter++;
         g_sink = value.get();
     });
-    std::printf("%-52s %10.2f ns/op\n", "untracked tracked<int>::operator=", ns);
+    return {"untracked_assignment", "untracked tracked<int>::operator=", ns};
 }
 
-void bench_tracked_assignment_ring_window() {
+BenchResult bench_tracked_assignment_ring_window() {
     chronicle::Session session(chronicle::Session::Config{
         chronicle::RetentionPolicy::ring_window(1024), chronicle::OverflowPolicy::DropOldest, 64});
     chronicle::tracked<int> value{0};
@@ -65,10 +78,11 @@ void bench_tracked_assignment_ring_window() {
         value = counter++;
         g_sink = value.get();
     });
-    std::printf("%-52s %10.2f ns/op\n", "tracked<int>::operator= (RingWindow 1024)", ns);
+    return {"tracked_assignment_ring_window_1024_single_threaded",
+            "tracked<int>::operator= (RingWindow 1024)", ns};
 }
 
-void bench_tracked_assignment_unbounded() {
+BenchResult bench_tracked_assignment_unbounded() {
     chronicle::Session session(chronicle::Session::Config{
         chronicle::RetentionPolicy::unbounded(), chronicle::OverflowPolicy::DropOldest, 64});
     chronicle::tracked<int> value{0};
@@ -78,10 +92,11 @@ void bench_tracked_assignment_unbounded() {
         value = counter++;
         g_sink = value.get();
     });
-    std::printf("%-52s %10.2f ns/op\n", "tracked<int>::operator= (Unbounded, undrained)", ns);
+    return {"tracked_assignment_unbounded_single_threaded",
+            "tracked<int>::operator= (Unbounded, undrained)", ns};
 }
 
-void bench_history_query(std::size_t log_size) {
+BenchResult bench_history_query(std::size_t log_size) {
     // Unbounded retention + periodic drains so `log_size` events genuinely
     // land in the durable log (RingWindow's default 1024 cap would silently
     // truncate this and defeat the point of measuring at each size).
@@ -105,8 +120,9 @@ void bench_history_query(std::size_t log_size) {
     });
     char label[64];
     std::snprintf(label, sizeof(label), "history() over %zu events", log_size);
-    std::printf("%-52s %10.2f ns/op (%.3f ns/event)\n", label, ns,
-                ns / static_cast<double>(std::max<std::size_t>(log_size, 1)));
+    char key[64];
+    std::snprintf(key, sizeof(key), "history_query_%zu_events", log_size);
+    return {key, label, ns};
 }
 
 // Aggregate throughput under real concurrent producers -- the scenario the
@@ -119,7 +135,7 @@ void bench_history_query(std::size_t log_size) {
 // DropNewest/DropOldest would spend the whole benchmark on their (rare, by
 // design) overflow path instead of the fast one, which wouldn't reflect
 // realistic sustained-throughput usage.
-void bench_contended_multithreaded_assignment(int num_threads) {
+BenchResult bench_contended_multithreaded_assignment(int num_threads) {
     chronicle::Session session(chronicle::Session::Config{
         chronicle::RetentionPolicy::unbounded(), chronicle::OverflowPolicy::DropNewest, 64});
     auto& stream = session.create_stream<int>("bench.contended");
@@ -152,26 +168,69 @@ void bench_contended_multithreaded_assignment(int num_threads) {
     double const total_ops = static_cast<double>(num_threads) * static_cast<double>(iterations_per_thread);
     char label[64];
     std::snprintf(label, sizeof(label), "contended record() across %d threads", num_threads);
-    std::printf("%-52s %10.2f ns/op (aggregate)\n", label, total_ns / total_ops);
+    char key[64];
+    std::snprintf(key, sizeof(key), "contended_record_%d_thread%s_aggregate", num_threads,
+                  num_threads == 1 ? "" : "s");
+    return {key, label, total_ns / total_ops};
+}
+
+std::string json_escape(std::string const& s) {
+    std::string out;
+    for (char c : s) {
+        if (c == '"' || c == '\\') {
+            out += '\\';
+        }
+        out += c;
+    }
+    return out;
+}
+
+void print_human(std::vector<BenchResult> const& results) {
+    std::printf("chronicle-bench -- lock-free ring buffer (docs/adr/0009), see bench/RESULTS.md\n");
+    std::printf("%-52s %10s\n", "benchmark", "result");
+    std::printf("--------------------------------------------------------------------------\n");
+    for (auto const& r : results) {
+        std::printf("%-52s %10.2f ns/op\n", r.label.c_str(), r.ns_per_op);
+    }
+}
+
+void print_json(std::vector<BenchResult> const& results) {
+    std::printf("{\"results_ns_per_op\":{");
+    for (std::size_t i = 0; i < results.size(); ++i) {
+        if (i != 0) {
+            std::printf(",");
+        }
+        std::printf("\"%s\":%.4f", json_escape(results[i].key).c_str(), results[i].ns_per_op);
+    }
+    std::printf("}}\n");
 }
 
 } // namespace
 
-int main() {
-    std::printf("chronicle-bench -- lock-free ring buffer (docs/adr/0009), see bench/RESULTS.md\n");
-    std::printf("%-52s %10s\n", "benchmark", "result");
-    std::printf("--------------------------------------------------------------------------\n");
+int main(int argc, char** argv) {
+    bool json = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--json") {
+            json = true;
+        }
+    }
 
-    bench_untracked_assignment();
-    bench_tracked_assignment_ring_window();
-    bench_tracked_assignment_unbounded();
-    bench_history_query(10);
-    bench_history_query(1'000);
-    bench_history_query(100'000);
-    bench_contended_multithreaded_assignment(1);
-    bench_contended_multithreaded_assignment(2);
-    bench_contended_multithreaded_assignment(4);
-    bench_contended_multithreaded_assignment(8);
+    std::vector<BenchResult> results;
+    results.push_back(bench_untracked_assignment());
+    results.push_back(bench_tracked_assignment_ring_window());
+    results.push_back(bench_tracked_assignment_unbounded());
+    results.push_back(bench_history_query(10));
+    results.push_back(bench_history_query(1'000));
+    results.push_back(bench_history_query(100'000));
+    results.push_back(bench_contended_multithreaded_assignment(1));
+    results.push_back(bench_contended_multithreaded_assignment(2));
+    results.push_back(bench_contended_multithreaded_assignment(4));
+    results.push_back(bench_contended_multithreaded_assignment(8));
 
+    if (json) {
+        print_json(results);
+    } else {
+        print_human(results);
+    }
     return 0;
 }

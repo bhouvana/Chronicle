@@ -1,0 +1,46 @@
+name: Benchmark regression gate
+
+# docs/10-roadmap.md's v1.0 CI performance-regression gate. See
+# bench/compare_baseline.py's own header comment for why the tolerance is
+# deliberately loose (100%) rather than tight: bench/baseline.json was
+# captured on a dev workstation, not this runner, and this project's own
+# measurements found ~30-40% run-to-run swings from ambient noise alone.
+# This gate catches gross regressions, not subtle ones -- see
+# docs/adr/0017-ci-performance-gate.md.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  bench:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Configure (bench only, no test/example/tool deps)
+        run: >
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          -DCHRONICLE_BUILD_TESTS=OFF -DCHRONICLE_BUILD_EXAMPLES=OFF
+          -DCHRONICLE_BUILD_TOOLS=OFF
+
+      - name: Build chronicle-bench
+        run: cmake --build build --config Release --target chronicle-bench --parallel
+
+      - name: Run benchmarks
+        shell: bash
+        run: build/bench/Release/chronicle-bench.exe --json > fresh_bench.json
+
+      - name: Compare against baseline
+        run: python bench/compare_baseline.py fresh_bench.json bench/baseline.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-results
+          path: fresh_bench.json
