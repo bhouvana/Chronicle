@@ -9,6 +9,7 @@
 // chronicle/io/loaded_session.hpp).
 
 #include "html_export.hpp"
+#include "perfetto_export.hpp"
 #include "serve.hpp"
 #include "session_loader.hpp"
 
@@ -254,12 +255,27 @@ int cmd_export_html(std::string const& path, std::string const& output_path) {
     return 0;
 }
 
+// docs/adr/0020-perfetto-export-bridge.md: reuses Perfetto's timeline UI
+// (Chrome JSON trace format) instead of Chronicle building a second one.
+int cmd_export_perfetto(std::string const& path, std::string const& output_path) {
+    auto const session = load_file(path);
+    std::ofstream out(output_path, std::ios::binary);
+    if (!out) {
+        throw std::runtime_error("cannot open output file: " + output_path);
+    }
+    chronicle_cli::write_perfetto_export(session, out);
+    std::cout << "wrote " << output_path << " (" << session.streams.size()
+              << " stream(s)) -- open at https://ui.perfetto.dev\n";
+    return 0;
+}
+
 void print_usage() {
     std::cout << "usage:\n"
                  "  chronicle-cli list <file>\n"
                  "  chronicle-cli history <file> <stream-name>\n"
                  "  chronicle-cli diff <file> <stream-name> <version-a> <version-b>\n"
                  "  chronicle-cli export --html <file> <output.html>\n"
+                 "  chronicle-cli export --perfetto <file> <output.json>\n"
 #ifdef CHRONICLE_CLI_HAVE_HTTPLIB
                  "  chronicle-cli serve <file> [--port N]\n"
 #endif
@@ -286,6 +302,9 @@ int main(int argc, char** argv) {
         }
         if (args[0] == "export" && args.size() == 4 && args[1] == "--html") {
             return cmd_export_html(args[2], args[3]);
+        }
+        if (args[0] == "export" && args.size() == 4 && args[1] == "--perfetto") {
+            return cmd_export_perfetto(args[2], args[3]);
         }
 #ifdef CHRONICLE_CLI_HAVE_HTTPLIB
         if (args[0] == "serve" && (args.size() == 2 || args.size() == 4)) {

@@ -236,7 +236,17 @@ lock-free per-thread ring buffer the architecture always specified.
 ## v2.0 — "Ecosystem & advanced replay" — IN PROGRESS
 - PMR allocator/arena adapter.
 - VS Code extension.
-- Perfetto export bridge.
+- [x] Perfetto export bridge: `chronicle-cli export --perfetto <file> <output.json>` emits the
+  legacy Chrome JSON Trace Event Format (a bare JSON array, verified directly against Perfetto's
+  own current documentation, not protobuf — zero new dependency, reusing the same plain-JSON-
+  generation approach the HTML export already uses). Scalar numeric streams become Counter events
+  (`"ph":"C"`, real value-over-time tracks); vector/map structural changes become Instant events
+  annotated with op/key/value, an honest mapping rather than forcing a plotted line onto data with
+  no continuous value. `tid` is each event's real `thread_hash` (already captured); `pid` is a
+  fixed synthetic value since Chronicle never captured an OS process id. Verified in the **real,
+  live Perfetto UI** via Playwright, not just JSON validity: a screenshot confirms `player.health`'s
+  counter track visibly stepping `100 → 75 → 45 → -5`, matching the recorded session exactly. See
+  [ADR 0020](adr/0020-perfetto-export-bridge.md).
 - [x] Hybrid logical clock upgrade for cross-stream causal ordering: `include/chronicle/hlc.hpp`'s
   `HlcTimestamp`/`HybridLogicalClock`, opt-in via `Session::Config::causal_clock` (default `off` —
   a real, measured ~30-50% per-event cost when enabled, not the noise-floor-indistinguishable cost
