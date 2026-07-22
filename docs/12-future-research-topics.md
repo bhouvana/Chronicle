@@ -117,6 +117,75 @@ Worth a dedicated research spike: how much of the gap can an *opt-in*, clearly
 close, at what overhead, and is the resulting complexity/platform-specificity
 worth it for the security-research audience segment (Phase 2) that most wants it?
 
+### Post-v2.0 spike findings (evaluated, not pre-committed — same framing as the
+### deterministic-replay spike above)
+
+This spike answers "does a `memcpy` hook even work" with a real, running
+Detours-based proof of concept on Windows (`Microsoft::Detours`, available
+via vcpkg — no new permanent dependency, evaluated the same opt-in way
+Tracy/Zstd/EnTT were), not just a plausibility argument — and the answer
+is a qualified, materially incomplete yes.
+
+**Compile-time-constant sizes — the common `tracked<T>` scalar case — are
+structurally invisible to any libc-level hook, confirmed at both the
+assembly and runtime level, not assumed.** A `memcpy(dst, src,
+sizeof(Small4))` (a 4-byte `int`-sized struct) compiled under MSVC `/O2`
+produces **zero reference to the `memcpy` symbol at all** — the optimizer
+inlines it directly into a single `mov eax, [rdx] / mov [rcx], eax` pair.
+This holds even at 64 bytes (`movups`-based inlining, still no `call`).
+A real Detours hook attached to `memcpy` and exercised against exactly
+this code path fired **zero times** — not a theoretical gap, a measured
+one. Since a raw `memcpy` directly overwriting a `tracked<int>`/
+`tracked<double>`'s backing storage (the exact scenario this topic exists
+to catch — a stray buffer overrun or an errant `reinterpret_cast`-based
+bulk copy landing on a tracked scalar) is usually a small, fixed-size
+copy, the case interposition was meant to close for the *most common*
+tracked-field kind is precisely the case it cannot close.
+
+**A genuinely runtime-variable size does survive as a real, hookable
+call — confirmed both statically and at runtime.** The same function
+compiled with a size parameter the optimizer cannot constant-fold (e.g.
+derived from `argc`, matching a real buffer/network-copy shape) emits
+`EXTRN memcpy:PROC` and a tail-call `jmp memcpy` through the imported
+symbol; the same Detours hook fired correctly, reporting the exact
+destination address and size. This is the scenario interposition
+*would* actually help with: bulk copies into a `tracked_vector<T>`'s
+backing array from an external buffer, which is plausibly a real
+security-research use case (Phase 2) — but it is not the scalar-field
+case that motivated this topic in the first place.
+
+**A second, unprompted hook firing was also observed** — an internal
+CRT/stdio call (a fixed ~10-byte copy at a static address, appearing
+consistently regardless of program input) triggered the same hook. A
+process-wide `memcpy` interposition catches *every* call in the process,
+not just ones touching Chronicle-tracked memory — a real deployment
+would need to filter hook firings against the address ranges of live
+`tracked<T>`/`tracked_vector<T>`/`tracked_map<K,V>` instances (Chronicle
+already does address-based bookkeeping for exactly this purpose in the
+PMR allocator adapter, [ADR 0021](adr/0021-pmr-allocator-adapter.md), so
+the mechanism exists — but it would need to be threaded through this
+different call path, real additional scope, not attempted in this spike)
+to be usable at all rather than an unfiltered, mostly-irrelevant firehose.
+
+**Not recommended as a near-term commitment.** The core problem: the
+interposition mechanism's blind spot (compile-time-constant sizes) and
+its coverage (runtime-variable sizes) partition almost exactly along
+"the common case" vs. "the uncommon case" for `tracked<T>` scalars
+specifically — the audience most likely to want this (Phase 2's
+security-research segment, worried about a stray write landing on a
+tracked field) would get real coverage for large/bulk copies and **no**
+coverage for the small, fixed-size copies that are arguably the more
+frequent accidental-corruption shape in practice. Combined with the
+address-range-filtering work still needed to make it usable rather than
+noisy, and the platform-specific implementation this would require twice
+over (Detours on Windows, LD_PRELOAD on Linux, with genuinely different
+mechanics — this spike only built and ran the Windows side), the
+cost/value ratio reads as unfavorable versus this project's existing
+documented, honest blind-spot statement in
+[04-technical-limitations.md](04-technical-limitations.md). Left
+findings-only, matching this document's own "not a solved problem"
+framing — no ADR, no shipped code, no opt-in build flag added.
+
 ## 4. Formal cost model / static analysis for "what will tracking this cost me"
 An IDE/compiler-time tool that estimates, from a tracked field's write frequency in
 a profiled run, what its history storage footprint and hot-path cost will be —

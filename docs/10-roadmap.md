@@ -233,7 +233,7 @@ lock-free per-thread ring buffer the architecture always specified.
   no dates are committed here; each milestone starts only once its predecessor's
   standalone value has been validated by real usage/feedback, not by a schedule.
 
-## v2.0 — "Ecosystem & advanced replay" — IN PROGRESS
+## v2.0 — "Ecosystem & advanced replay" — SHIPPED
 - [x] PMR allocator/arena adapter: `chronicle::TrackedMemoryResource` (`include/chronicle/
   tracked_memory_resource.hpp`) wraps a `std::pmr::memory_resource`, recording every
   allocate/deallocate as a `MapOp<address, size>` event — reusing `tracked_map<K,V>`'s exact
