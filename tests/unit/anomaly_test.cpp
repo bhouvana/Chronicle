@@ -76,3 +76,50 @@ CHRONICLE_TEST(range_anomalies_is_causal_not_hindsight_scored) {
     }
     CHRONICLE_CHECK(found_the_outlier);
 }
+
+// docs/13-vision.md Layer 8's "size always grows, never shrinks... possible
+// leak" example -- chronicle::container_growth_report()/is_likely_leak().
+
+CHRONICLE_TEST(container_growth_report_tracks_size_through_inserts_and_erases) {
+    Session session;
+    tracked_vector<int> buffer;
+    track(buffer, session, "buffer");
+    buffer.push_back(1);
+    buffer.push_back(2);
+    buffer.push_back(3);
+    buffer.erase(0);
+
+    auto const report = container_growth_report(history(buffer));
+    CHRONICLE_CHECK(report.max_size == 3);
+    CHRONICLE_CHECK(report.final_size == 2);
+    CHRONICLE_CHECK(report.insert_count == 3);
+    CHRONICLE_CHECK(report.erase_or_clear_count == 1);
+    CHRONICLE_CHECK(report.ever_shrunk);
+}
+
+CHRONICLE_TEST(is_likely_leak_flags_a_container_that_never_shrinks_past_the_threshold) {
+    Session session;
+    tracked_vector<int> buffer;
+    track(buffer, session, "buffer");
+    for (int i = 0; i < 15; ++i) {
+        buffer.push_back(i); // never erased -- a real "never shrinks" shape
+    }
+
+    auto const report = container_growth_report(history(buffer));
+    CHRONICLE_CHECK(is_likely_leak(report));         // default threshold (10) -- 15 >= 10
+    CHRONICLE_CHECK(!is_likely_leak(report, 100));   // explicit higher threshold -- not flagged
+}
+
+CHRONICLE_TEST(is_likely_leak_does_not_flag_a_container_that_has_shrunk) {
+    Session session;
+    tracked_vector<int> buffer;
+    track(buffer, session, "buffer");
+    for (int i = 0; i < 15; ++i) {
+        buffer.push_back(i);
+    }
+    buffer.erase(0); // one real shrink is enough to disqualify "never shrinks"
+
+    auto const report = container_growth_report(history(buffer));
+    CHRONICLE_CHECK(report.ever_shrunk);
+    CHRONICLE_CHECK(!is_likely_leak(report));
+}

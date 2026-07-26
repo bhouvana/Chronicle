@@ -5,6 +5,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "chronicle/container_op.hpp"
 #include "chronicle/timeline.hpp"
 
 // docs/12-future-research-topics.md topic 8, docs/adr/0026-anomaly-detection.md:
@@ -79,6 +80,68 @@ template <typename T>
         m2 += delta * delta2;
     }
     return result;
+}
+
+// docs/13-vision.md Layer 8's own example: "size always grows, never
+// shrinks... possible leak." A structural (shape) anomaly over a
+// tracked_vector<T>'s ContainerOp<T> history, complementing
+// range_anomalies() above (which only makes sense for a single numeric
+// value, not a container's size). Real replay of Insert/Erase/Clear ops
+// into a running size counter -- the same fold `chronicle::apply()`
+// (container_op.hpp) already does for full materialization, just
+// tracking size instead of full contents, since size is all a growth
+// check needs.
+template <typename T>
+struct ContainerGrowthReport {
+    std::size_t max_size = 0;
+    std::size_t final_size = 0;
+    std::size_t insert_count = 0;
+    std::size_t erase_or_clear_count = 0;
+    bool ever_shrunk = false; // true if any Erase/Clear was ever recorded
+};
+
+template <typename T>
+[[nodiscard]] ContainerGrowthReport<T> container_growth_report(Timeline<ContainerOp<T>> const& history) {
+    ContainerGrowthReport<T> report;
+    std::size_t size = 0;
+    for (auto const& record : history) {
+        switch (record.value.kind) {
+            case ContainerOpKind::Insert:
+                ++size;
+                ++report.insert_count;
+                break;
+            case ContainerOpKind::Erase:
+                if (size > 0) {
+                    --size;
+                }
+                ++report.erase_or_clear_count;
+                report.ever_shrunk = true;
+                break;
+            case ContainerOpKind::Update:
+                break; // size-neutral
+            case ContainerOpKind::Clear:
+                if (size > 0) {
+                    report.ever_shrunk = true;
+                }
+                size = 0;
+                ++report.erase_or_clear_count;
+                break;
+        }
+        report.max_size = size > report.max_size ? size : report.max_size;
+    }
+    report.final_size = size;
+    return report;
+}
+
+// A named, explicit heuristic, not a hidden threshold buried in the
+// report struct: "never observed to shrink, and currently holds at least
+// `min_size_to_flag` elements" -- real risk of false positives for a
+// container that simply hasn't been erased from *yet* (a genuine leak
+// looks identical to "still warming up" from this data alone), stated
+// honestly rather than papered over with confident-sounding language.
+template <typename T>
+[[nodiscard]] bool is_likely_leak(ContainerGrowthReport<T> const& report, std::size_t min_size_to_flag = 10) {
+    return !report.ever_shrunk && report.final_size >= min_size_to_flag;
 }
 
 } // namespace chronicle
