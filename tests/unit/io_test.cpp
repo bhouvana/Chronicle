@@ -214,3 +214,94 @@ CHRONICLE_TEST(hlc_round_trips_through_on_disk_format_when_enabled) {
     CHRONICLE_CHECK(stream->events[0].hlc < stream->events[1].hlc);
     CHRONICLE_CHECK(stream->events[1].hlc < stream->events[2].hlc);
 }
+
+// docs/adr/0039-persist-provenance-and-derivation.md / format v5: the
+// common case -- a file with no set_with_stacktrace()/derive() calls at
+// all -- still round-trips cleanly with empty provenance/derivations
+// (the extended sections are always present, per SessionWriter's
+// destructor, but empty here).
+CHRONICLE_TEST(files_without_provenance_or_derivation_load_with_empty_tables) {
+    Session session;
+    chronicle::tracked<int> health{100};
+    chronicle::track(health, session, "player.health");
+    health = 75;
+
+    std::stringstream ss;
+    {
+        SessionWriter writer(ss, session);
+        writer.write(health);
+    }
+
+    auto const loaded = load_session(ss);
+    CHRONICLE_CHECK(loaded.provenance.empty());
+    CHRONICLE_CHECK(loaded.derivations.empty());
+}
+
+CHRONICLE_TEST(provenance_round_trips_through_on_disk_format) {
+    Session session;
+    chronicle::tracked<int> health{100};
+    chronicle::track(health, session, "player.health");
+    chronicle::set_with_stacktrace(health, 42); // real call chain, in-process
+
+    std::stringstream ss;
+    {
+        SessionWriter writer(ss, session);
+        writer.write(health);
+        writer.write_provenance(health);
+    }
+
+    auto const loaded = load_session(ss);
+    auto const* stream = loaded.find("player.health");
+    CHRONICLE_CHECK(stream != nullptr);
+    CHRONICLE_CHECK(stream->events.size() == 2); // track()'s v0 + the stacktrace write
+
+    auto const* frames = loaded.provenance_for("player.health", stream->events.back().version);
+    CHRONICLE_CHECK(frames != nullptr);
+    CHRONICLE_CHECK(!frames->empty());
+    CHRONICLE_CHECK(frames->front().source_line > 0);
+    // The version that has no captured trace (track()'s own v0) correctly
+    // has none persisted for it.
+    CHRONICLE_CHECK(loaded.provenance_for("player.health", stream->events.front().version) == nullptr);
+}
+
+CHRONICLE_TEST(derivation_round_trips_through_on_disk_format) {
+    Session session;
+    chronicle::tracked<int> income{100};
+    chronicle::tracked<int> tax{20};
+    chronicle::tracked<int> gold{0};
+    chronicle::track(income, session, "income");
+    chronicle::track(tax, session, "tax");
+    chronicle::track(gold, session, "gold");
+
+    auto binding =
+        chronicle::derive<int, int, int>(gold, [](int const& i, int const& t) { return i - t; }, income, tax);
+    income = 110; // triggers recompute -> gold = 90, explanation recorded
+
+    std::stringstream ss;
+    {
+        SessionWriter writer(ss, session);
+        writer.write(gold);
+        writer.write_derived(gold);
+    }
+
+    auto const loaded = load_session(ss);
+    auto const* gold_stream = loaded.find("gold");
+    CHRONICLE_CHECK(gold_stream != nullptr);
+
+    auto const* changes = loaded.derivation_for("gold", gold_stream->events.back().version);
+    CHRONICLE_CHECK(changes != nullptr);
+    CHRONICLE_CHECK(changes->size() == 2);
+    bool found_income_changed = false;
+    for (auto const& change : *changes) {
+        if (change.name == "income") {
+            CHRONICLE_CHECK(change.changed);
+            CHRONICLE_CHECK(change.old_value == "100");
+            CHRONICLE_CHECK(change.new_value == "110");
+            found_income_changed = true;
+        }
+        if (change.name == "tax") {
+            CHRONICLE_CHECK(!change.changed);
+        }
+    }
+    CHRONICLE_CHECK(found_income_changed);
+}

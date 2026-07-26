@@ -3,9 +3,12 @@
 #include <cstddef>
 #include <ostream>
 #include <sstream>
+#include <vector>
 
+#include "chronicle/derived.hpp"
 #include "chronicle/io/format.hpp"
 #include "chronicle/io/wire.hpp"
+#include "chronicle/provenance.hpp"
 #include "chronicle/session.hpp"
 #include "chronicle/tracked.hpp"
 #include "chronicle/tracked_map.hpp"
@@ -55,12 +58,26 @@ public:
     SessionWriter(SessionWriter const&) = delete;
     SessionWriter& operator=(SessionWriter const&) = delete;
 
-    // Compresses (if a codec was supplied) and flushes the buffered payload
-    // to `os`. Same convention as the rest of this file: no exceptions
-    // escape a destructor, so a write failure here surfaces the same way
-    // every other write in this class already does -- via `os`'s own
-    // failbit, checkable by the caller through their own reference to it.
+    // Writes the v5 extended-sections terminator + provenance/derivation
+    // tables (always, even when both are empty -- every v5 file has the
+    // same shape), then -- unchanged from before -- compresses (if a
+    // codec was supplied) and flushes the buffered payload to `os`. Same
+    // convention as the rest of this file: no exceptions escape a
+    // destructor, so a write failure here surfaces the same way every
+    // other write in this class already does -- via `os`'s own failbit,
+    // checkable by the caller through their own reference to it.
     ~SessionWriter() {
+        auto& out = target();
+        write_u64(out, kExtendedSectionsMarker);
+        write_u64(out, pending_provenance_.size());
+        for (auto const& entry : pending_provenance_) {
+            write_provenance_entry(out, entry);
+        }
+        write_u64(out, pending_derivation_.size());
+        for (auto const& entry : pending_derivation_) {
+            write_derivation_entry(out, entry);
+        }
+
         if (codec_ == nullptr) {
             return; // wrote directly to os_ all along; nothing to flush
         }
@@ -127,6 +144,52 @@ public:
         }
     }
 
+    // docs/adr/0039-persist-provenance-and-derivation.md: explicit and
+    // opt-in, same as write<T>() itself -- calling this is how a caller
+    // says "yes, persist this field's captured call chains," not
+    // something write<T>() does automatically (most fields never call
+    // chronicle::set_with_stacktrace() at all, so there'd be nothing to
+    // persist for them anyway). Walks the field's own history and looks
+    // up each version in the in-process provenance::Registry (keyed by
+    // Stream<T>::id(), ADR 0032), translating to the field's on-disk
+    // stream name -- the identifier that actually survives a save/load
+    // round trip. Buffered, not written immediately: the extended
+    // sections must come after every stream block, regardless of what
+    // order the caller calls write()/write_provenance()/write_derived()
+    // in.
+    template <typename T>
+    void write_provenance(tracked<T> const& field) {
+        auto* stream = field.stream();
+        if (stream == nullptr) {
+            return;
+        }
+        for (auto const& record : stream->history()) {
+            auto trace = provenance::Registry::instance().find(stream->id(), record.version);
+            if (trace.has_value()) {
+                pending_provenance_.push_back(ProvenanceEntry{stream->name(), record.version, std::move(*trace)});
+            }
+        }
+    }
+
+    // Same shape as write_provenance() above, against
+    // chronicle::derived::Registry (ADR 0033). Called on the *target* of
+    // a derive() binding -- the field a DependencyChange explanation is
+    // actually keyed on -- not on any of its dependencies.
+    template <typename T>
+    void write_derived(tracked<T> const& target_field) {
+        auto* stream = target_field.stream();
+        if (stream == nullptr) {
+            return;
+        }
+        for (auto const& record : stream->history()) {
+            auto changes = derived::Registry::instance().find(stream->id(), record.version);
+            if (changes.has_value()) {
+                pending_derivation_.push_back(
+                    DerivationEntry{stream->name(), record.version, std::move(*changes)});
+            }
+        }
+    }
+
 private:
     // Every write<T>() overload goes through here rather than touching os_
     // directly, so compression is a one-line difference (which stream) not
@@ -147,6 +210,8 @@ private:
     std::chrono::steady_clock::time_point start_;
     CompressionCodec const* codec_;
     std::ostringstream buffer_; // only written to/read from when codec_ != nullptr
+    std::vector<ProvenanceEntry> pending_provenance_;
+    std::vector<DerivationEntry> pending_derivation_;
 };
 
 } // namespace chronicle::io

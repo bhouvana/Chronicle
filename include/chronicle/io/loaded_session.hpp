@@ -48,10 +48,39 @@ struct LoadedStream {
 struct LoadedSession {
     std::vector<LoadedStream> streams;
 
+    // docs/adr/0039-persist-provenance-and-derivation.md (format v5):
+    // ADR 0032/0033's in-process-only registries, round-tripped through
+    // the file by stream name + version (the identifier that actually
+    // survives a save/load round trip -- the live registries key on a
+    // process-local stream id(), which means nothing once the file is
+    // reloaded in a different process).
+    std::vector<ProvenanceEntry> provenance;
+    std::vector<DerivationEntry> derivations;
+
     [[nodiscard]] LoadedStream const* find(std::string const& name) const {
         for (auto const& stream : streams) {
             if (stream.name == name) {
                 return &stream;
+            }
+        }
+        return nullptr;
+    }
+
+    [[nodiscard]] std::vector<provenance::StackFrame> const* provenance_for(std::string const& stream_name,
+                                                                             std::uint64_t version) const {
+        for (auto const& entry : provenance) {
+            if (entry.stream_name == stream_name && entry.version == version) {
+                return &entry.frames;
+            }
+        }
+        return nullptr;
+    }
+
+    [[nodiscard]] std::vector<derived::DependencyChange> const* derivation_for(std::string const& stream_name,
+                                                                                std::uint64_t version) const {
+        for (auto const& entry : derivations) {
+            if (entry.stream_name == stream_name && entry.version == version) {
+                return &entry.changes;
             }
         }
         return nullptr;
@@ -64,11 +93,15 @@ namespace detail {
     LoadedSession session;
 
     while (true) {
-        // read_u64 at true EOF sets eofbit without extracting anything --
-        // that's the intended, only block-boundary terminator (no leading
-        // stream count in this format, see session_writer.hpp).
+        // docs/adr/0039-persist-provenance-and-derivation.md (format v5):
+        // kExtendedSectionsMarker is now the real stream-loop terminator
+        // -- v5 always writes real data (the two extended-section
+        // tables, even when both are empty) after the last stream block,
+        // so genuine end-of-file is no longer this loop's stop
+        // condition. The is.eof() check remains as a defensive fallback
+        // for a truncated file, not the primary signal.
         auto const name_len = read_u64(is);
-        if (is.eof()) {
+        if (name_len == kExtendedSectionsMarker || is.eof()) {
             break;
         }
 
@@ -99,6 +132,23 @@ namespace detail {
 
         if (!is.good()) {
             break;
+        }
+    }
+
+    // docs/adr/0039: present in every v5 file, even when both are empty
+    // (SessionWriter's destructor always writes them) -- guarded by
+    // is.good() so a stream loop that broke out via a truncated/malformed
+    // file doesn't then try to read past it.
+    if (is.good()) {
+        auto const provenance_count = read_u64(is);
+        session.provenance.reserve(provenance_count);
+        for (std::uint64_t i = 0; i < provenance_count; ++i) {
+            session.provenance.push_back(read_provenance_entry(is));
+        }
+        auto const derivation_count = read_u64(is);
+        session.derivations.reserve(derivation_count);
+        for (std::uint64_t i = 0; i < derivation_count; ++i) {
+            session.derivations.push_back(read_derivation_entry(is));
         }
     }
     return session;

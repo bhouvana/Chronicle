@@ -11,8 +11,10 @@
 #include <string_view>
 #include <thread>
 
+#include "chronicle/derived.hpp"
 #include "chronicle/hlc.hpp"
 #include "chronicle/io/wire.hpp"
+#include "chronicle/provenance.hpp"
 
 // Shared file-format constants and helpers, used by both the write side
 // (session_writer.hpp, knows T) and the read side (loaded_session.hpp,
@@ -39,7 +41,29 @@ inline constexpr char kMagic[4] = {'C', 'H', 'R', 'N'};
 // longer be read. No compatibility requirement exists yet for this format
 // (docs/11's CI/versioning story hasn't been reached), so this is a clean
 // break, not a migration, same as every prior bump.
-inline constexpr std::uint32_t kFormatVersion = 4;
+//
+// v5 (docs/adr/0039-persist-provenance-and-derivation.md): two new,
+// optional extended sections follow the last stream block -- a
+// provenance table (chronicle::provenance::StackFrame chains from
+// ADR 0032's set_with_stacktrace(), keyed by stream name + version) and a
+// derivation table (chronicle::derived::DependencyChange lists from
+// ADR 0033's derive()/explain(), same keying). Both registries this data
+// comes from are in-process-only singletons keyed by a stream's
+// process-local id() (ADR 0032); persisting means translating that key to
+// the one identifier that survives a save/load round trip -- the stream's
+// on-disk name. Another clean, breaking bump, same convention as v1-v4.
+inline constexpr std::uint32_t kFormatVersion = 5;
+
+// A stream name-length value no real stream could ever have (an
+// exabyte-scale string) -- the explicit terminator for the stream-block
+// loop in v5+ files. Needed because the format has no leading stream
+// count (session_writer.hpp's own "single-pass, self-terminating"
+// design) and previously relied on genuine end-of-file to know when
+// streams were done; v5 adds real data *after* the streams, so "real
+// EOF" can no longer be the stream loop's stop condition. Same "an
+// otherwise-impossible value is a real, unambiguous sentinel" convention
+// this format already uses for HlcTimestamp{0,0} and call_site.line==0.
+inline constexpr std::uint64_t kExtendedSectionsMarker = 0xFFFFFFFFFFFFFFFFull;
 
 // Everything after this tag in the file is either the plain payload
 // (None) or exactly one compressed blob covering the *entire* rest of the
@@ -148,6 +172,98 @@ inline HlcTimestamp read_hlc(std::istream& is) {
     hlc.physical_us = read_u64(is);
     hlc.logical = static_cast<std::uint32_t>(read_u64(is));
     return hlc;
+}
+
+// docs/adr/0039-persist-provenance-and-derivation.md: shared between the
+// write side (session_writer.hpp) and read side (loaded_session.hpp),
+// same as everything else in this file -- keyed by stream **name**, not
+// the in-process-only stream_id() the live registries
+// (chronicle::provenance::Registry/chronicle::derived::Registry) actually
+// use, since name is the one identifier that survives a save/load round
+// trip.
+
+inline void write_provenance_frame(std::ostream& os, provenance::StackFrame const& frame) {
+    write_string(os, frame.description);
+    write_string(os, frame.source_file);
+    write_u64(os, frame.source_line);
+}
+
+inline provenance::StackFrame read_provenance_frame(std::istream& is) {
+    provenance::StackFrame frame;
+    frame.description = read_string(is);
+    frame.source_file = read_string(is);
+    frame.source_line = static_cast<std::uint32_t>(read_u64(is));
+    return frame;
+}
+
+struct ProvenanceEntry {
+    std::string stream_name;
+    std::uint64_t version = 0;
+    std::vector<provenance::StackFrame> frames;
+};
+
+inline void write_provenance_entry(std::ostream& os, ProvenanceEntry const& entry) {
+    write_string(os, entry.stream_name);
+    write_u64(os, entry.version);
+    write_u64(os, entry.frames.size());
+    for (auto const& frame : entry.frames) {
+        write_provenance_frame(os, frame);
+    }
+}
+
+inline ProvenanceEntry read_provenance_entry(std::istream& is) {
+    ProvenanceEntry entry;
+    entry.stream_name = read_string(is);
+    entry.version = read_u64(is);
+    auto const frame_count = read_u64(is);
+    entry.frames.reserve(frame_count);
+    for (std::uint64_t i = 0; i < frame_count; ++i) {
+        entry.frames.push_back(read_provenance_frame(is));
+    }
+    return entry;
+}
+
+inline void write_dependency_change(std::ostream& os, derived::DependencyChange const& change) {
+    write_string(os, change.name);
+    write_string(os, change.old_value);
+    write_string(os, change.new_value);
+    write_u8(os, change.changed ? 1 : 0);
+}
+
+inline derived::DependencyChange read_dependency_change(std::istream& is) {
+    derived::DependencyChange change;
+    change.name = read_string(is);
+    change.old_value = read_string(is);
+    change.new_value = read_string(is);
+    change.changed = read_u8(is) != 0;
+    return change;
+}
+
+struct DerivationEntry {
+    std::string stream_name;
+    std::uint64_t version = 0;
+    std::vector<derived::DependencyChange> changes;
+};
+
+inline void write_derivation_entry(std::ostream& os, DerivationEntry const& entry) {
+    write_string(os, entry.stream_name);
+    write_u64(os, entry.version);
+    write_u64(os, entry.changes.size());
+    for (auto const& change : entry.changes) {
+        write_dependency_change(os, change);
+    }
+}
+
+inline DerivationEntry read_derivation_entry(std::istream& is) {
+    DerivationEntry entry;
+    entry.stream_name = read_string(is);
+    entry.version = read_u64(is);
+    auto const change_count = read_u64(is);
+    entry.changes.reserve(change_count);
+    for (std::uint64_t i = 0; i < change_count; ++i) {
+        entry.changes.push_back(read_dependency_change(is));
+    }
+    return entry;
 }
 
 } // namespace chronicle::io
