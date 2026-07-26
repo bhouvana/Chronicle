@@ -10,6 +10,7 @@
 
 #include "diff_runs.hpp"
 #include "html_export.hpp"
+#include "merge.hpp"
 #include "perfetto_export.hpp"
 #include "replay.hpp"
 #include "serve.hpp"
@@ -211,12 +212,44 @@ int cmd_diff_runs(std::string const& path_a, std::string const& path_b) {
     return differs ? 1 : 0;
 }
 
+// docs/12-future-research-topics.md topic 6: combines N already-captured
+// per-process session files into one, namespaced by tag. `args` are
+// "<tag>:<path>" pairs -- ':' rather than '=' so a Windows drive-letter
+// path ("C:\...") only ever supplies one extra ':' to split on, handled by
+// splitting at the *first* ':' only.
+int cmd_merge(std::string const& output_path, std::vector<std::string> const& tagged_args) {
+    std::vector<std::pair<std::string, chronicle::io::LoadedSession>> inputs;
+    for (auto const& arg : tagged_args) {
+        auto const colon = arg.find(':');
+        if (colon == std::string::npos) {
+            std::cerr << "error: expected <tag>:<path>, got: " << arg << "\n";
+            return 1;
+        }
+        std::string const tag = arg.substr(0, colon);
+        std::string const path = arg.substr(colon + 1);
+        inputs.emplace_back(tag, load_file(path));
+    }
+    std::ofstream out(output_path, std::ios::binary);
+    if (!out) {
+        throw std::runtime_error("cannot open output file: " + output_path);
+    }
+    chronicle_cli::write_merged_session(inputs, out);
+    std::size_t total_streams = 0;
+    for (auto const& [tag, session] : inputs) {
+        total_streams += session.streams.size();
+    }
+    std::cout << "wrote " << output_path << " (" << inputs.size() << " process(es), " << total_streams
+              << " stream(s) total)\n";
+    return 0;
+}
+
 void print_usage() {
     std::cout << "usage:\n"
                  "  chronicle-cli list <file>\n"
                  "  chronicle-cli history <file> <stream-name>\n"
                  "  chronicle-cli diff <file> <stream-name> <version-a> <version-b>\n"
                  "  chronicle-cli diff-runs <file-a> <file-b>\n"
+                 "  chronicle-cli merge <output.chronicle> <tag1>:<file1> [<tag2>:<file2> ...]\n"
                  "  chronicle-cli export --html <file> <output.html>\n"
                  "  chronicle-cli export --perfetto <file> <output.json>\n"
 #ifdef CHRONICLE_CLI_HAVE_HTTPLIB
@@ -245,6 +278,9 @@ int main(int argc, char** argv) {
         }
         if (args[0] == "diff-runs" && args.size() == 3) {
             return cmd_diff_runs(args[1], args[2]);
+        }
+        if (args[0] == "merge" && args.size() >= 3) {
+            return cmd_merge(args[1], std::vector<std::string>(args.begin() + 2, args.end()));
         }
         if (args[0] == "export" && args.size() == 4 && args[1] == "--html") {
             return cmd_export_html(args[2], args[3]);

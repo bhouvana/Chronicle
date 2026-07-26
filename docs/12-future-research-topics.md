@@ -233,6 +233,16 @@ and a materially different trust/security model. Not assumed to be in scope for 
 project's identity at all; worth revisiting only after v2.0's ecosystem milestone
 validates strong single-process adoption.
 
+**Partially shipped — see [ADR 0028](adr/0028-multiprocess-merge.md).** The
+smallest real, honest slice of this: `chronicle-cli merge` combines
+multiple already-captured per-process `.chronicle` files into one,
+namespaced by tag, viewable through every existing subcommand unmodified.
+Deliberately does NOT establish any ordering between different processes'
+streams — that would need the real clock synchronization this topic
+already flags as substantial, separate scope, which this does not attempt.
+File-based/offline only; no live network transport, which remains the
+larger, unaddressed part of this topic.
+
 ## 7. Embedded / allocation-free tier
 Phase 2 concluded "mostly no" for constrained embedded targets. Worth periodically
 re-evaluating: could a fixed-capacity, static-allocation-only Recording Engine
