@@ -85,6 +85,20 @@ public:
 
     [[nodiscard]] std::size_t stream_count() const noexcept { return streams_.size(); }
 
+    // docs/adr/0031-object-graph.md: the one accessor object_graph.hpp
+    // needs to enumerate a live Session's streams by name -- exposes
+    // names only, not the streams themselves (StreamBase::name() already
+    // returns std::string const&, so this is a plain read, no new
+    // capability to mutate or drain anything).
+    [[nodiscard]] std::vector<std::string> stream_names() const {
+        std::vector<std::string> names;
+        names.reserve(streams_.size());
+        for (auto const& stream : streams_) {
+            names.push_back(stream->name());
+        }
+        return names;
+    }
+
 private:
     Config config_;
     std::chrono::steady_clock::time_point start_;

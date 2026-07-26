@@ -14,6 +14,7 @@ add_executable(chronicle-core-tests
     embedded_test.cpp
     interposition_registry_test.cpp
     reflect_p2996_test.cpp
+    object_graph_test.cpp
 )
 target_link_libraries(chronicle-core-tests PRIVATE chronicle::core)
 target_include_directories(chronicle-core-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
