@@ -23,15 +23,20 @@ bridge), and 10 are done. Layer 8 is extended. Layers 3 and 4's
 in-process-only registries now persist through a shared format v5
 extension (ADR 0039), which also gave Layer 10's narrative its full
 payoff (real call chains and derivation explanations, not just call
-sites). Nothing here reopens or reverses a decision this project's ADRs
-already made — Layer 6 was completed in its explicitly-scoped form
-("rewind everything Chronicle instruments," not literal memory-level
-determinism), Layer 9 shipped exactly one bridge that could be verified
-for real in this environment rather than fabricating the others. Every
-new layer either extended an existing extension point (`RecordHook`, the
-`(stream_id, version)` registry pattern, `merge_object_history()`) or
-added a small, additive, real capability with its own measured cost where
-one existed to measure.
+sites). `RecordHook`'s single-slot limit — the last open architectural
+follow-on from Layer 4 — is closed too (ADR 0040): Tracy plotting and
+`derive()` now compose on one field, verified live against a real Tracy
+capture, not just compiled. Nothing here reopens or reverses a decision
+this project's ADRs already made — Layer 6 was completed in its
+explicitly-scoped form ("rewind everything Chronicle instruments," not
+literal memory-level determinism), Layer 9 shipped exactly one bridge
+that could be verified for real in this environment rather than
+fabricating the others, and ADR 0040 kept `set_record_hook()`'s exact old
+signature (ADR 0018 compliance), verified with a direct backward-
+compatibility test. Every new layer either extended an existing extension
+point (`RecordHook`, the `(stream_id, version)` registry pattern,
+`merge_object_history()`) or added a small, additive, real capability with
+its own measured cost where one existed to measure.
 
 ## Layer 1 — State Recording — **done** (v0.1 onward)
 `tracked<T>`/`tracked_vector<T>`/`tracked_map<K,V>`, `history()`/
@@ -79,10 +84,11 @@ per stream (can't compose with e.g. a Tracy hook on the same dependency),
 no derived-of-derived (no dependency-graph ordering/cycle detection
 attempted). Originally in-process only; **now persists through format v5**
 (`SessionWriter::write_derived()`), so a `derive()` target's real
-dependency-change explanation survives a save/load round trip. The one
-remaining open follow-on: composable multi-hook dispatch on `RecordHook`
-(unblocks the single-slot limit, letting provenance/derivation/Tracy
-coexist on one field).
+dependency-change explanation survives a save/load round trip.
+`RecordHook`'s single-slot limit — the one remaining open follow-on this
+entry named — is **also now closed** (ADR 0040): `Derivation` and the
+Tracy bridge can share one field's hooks, verified by attaching both to
+the same dependency stream and confirming both fire.
 
 ## Layer 5 — Object Time Machine — **done** (this cycle) — [ADR 0034](adr/0034-object-snapshot.md)
 `history(player)` instead of one field at a time is `object-history`
@@ -182,17 +188,18 @@ the Layer 6 caution (the literal, unscoped version) as a permanent hard
 gate, not a suggestion that expires.
 
 The real, concretely-scoped remaining work, in rough priority order:
-1. **Composable multi-hook dispatch on `RecordHook`** — unblocks Layer 4's
-   single-hook limit and lets provenance/derivation/Tracy coexist on one
-   field instead of competing for the one slot. Now the top item, since
-   persistence (formerly top of this list) shipped this cycle (ADR 0039).
-2. **Layer 7's remaining named queries** ("which object allocates the
+1. **Layer 7's remaining named queries** ("which object allocates the
    most," "when did this invariant first fail") — each its own small,
-   scoped addition, not a general query engine.
-3. **A second Layer 9 bridge** (network or GPU) — only once there's a real
+   scoped addition, not a general query engine. Now the top item, since
+   both persistence (ADR 0039) and multi-hook composability (ADR 0040)
+   shipped this cycle.
+2. **A second Layer 9 bridge** (network or GPU) — only once there's a real
    system available to verify it against honestly, the same bar the
    filesystem bridge was held to.
-4. **`program-snapshot`/`program-history` (Layer 6, scoped) reading the
+3. **`program-snapshot`/`program-history` (Layer 6, scoped) reading the
    new provenance/derivation tables** — a small, natural extension now
    that the data exists on disk, not attempted in this pass since
    `narrate` was the more direct payoff.
+4. **Raising `kMaxRecordHooks` past 4** — only once a real 5th concurrent
+   `RecordHook` consumer actually exists (ADR 0040); a mechanical change
+   when it does, not worth doing speculatively ahead of one.
