@@ -13,6 +13,7 @@
 #include "chronicle/map_diff.hpp"
 #include "chronicle/map_op.hpp"
 #include "chronicle/object_graph.hpp"
+#include "chronicle/provenance.hpp"
 #include "chronicle/race.hpp"
 #include "chronicle/retention.hpp"
 #include "chronicle/session.hpp"

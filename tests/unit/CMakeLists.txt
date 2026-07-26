@@ -15,9 +15,22 @@ add_executable(chronicle-core-tests
     interposition_registry_test.cpp
     reflect_p2996_test.cpp
     object_graph_test.cpp
+    provenance_test.cpp
 )
 target_link_libraries(chronicle-core-tests PRIVATE chronicle::core)
 target_include_directories(chronicle-core-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# docs/adr/0032-provenance-stacktrace.md: std::stacktrace only resolves
+# real function/file/line info (rather than bare module+offset) when
+# debug info is present -- verified directly against this exact toolchain,
+# not assumed. Needed so provenance_test.cpp actually exercises real
+# symbol resolution instead of a degenerate always-empty case.
+if(MSVC)
+    target_compile_options(chronicle-core-tests PRIVATE /Zi)
+    target_link_options(chronicle-core-tests PRIVATE /DEBUG)
+else()
+    target_compile_options(chronicle-core-tests PRIVATE -g)
+endif()
 
 # Zstd compression tests (docs/adr/0014-storage-engine-compression.md) are
 # opt-in, same as tools/codegen and the Tracy example: most environments

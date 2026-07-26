@@ -28,6 +28,16 @@ public:
     virtual ~StreamBase() = default;
     virtual void drain() = 0;
     [[nodiscard]] virtual std::string const& name() const noexcept = 0;
+
+    // docs/adr/0032-provenance-stacktrace.md: exposes the stable,
+    // monotonically-increasing id every Stream<T> already assigns itself
+    // (stream.hpp's next_stream_id()), created there specifically to avoid
+    // the address-reuse bug ADR 0009 found (stack-allocated Stream<T>/
+    // Session objects routinely reuse addresses across sequential test
+    // functions). The provenance registry keys on this instead of `this`
+    // for exactly the same reason -- reusing an existing, already-proven
+    // identity scheme rather than inventing a second one.
+    [[nodiscard]] virtual std::uint64_t id() const noexcept = 0;
 };
 
 class Session {

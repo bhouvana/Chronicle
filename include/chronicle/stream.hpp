@@ -243,6 +243,7 @@ public:
     }
 
     [[nodiscard]] std::string const& name() const noexcept override { return name_; }
+    [[nodiscard]] std::uint64_t id() const noexcept override { return id_; }
 
 private:
     static std::size_t compute_ring_capacity(Session const& owner) {
