@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -282,36 +283,88 @@ int cmd_object_history(std::string const& path, std::string const& object_name) 
         return 1;
     }
 
-    struct MergedEntry {
-        std::string field_name;
-        LoadedEvent const* event;
-        StreamShape shape;
-    };
-    std::vector<MergedEntry> merged;
-    bool all_hlc_known = true;
-    for (auto const* field : it->fields) {
-        for (auto const& event : field->events) {
-            merged.push_back(MergedEntry{field->name, &event, field->shape});
-            if (!is_known(event.hlc)) {
-                all_hlc_known = false;
-            }
+    auto const merged = chronicle_cli::merge_object_history(*it);
+    std::cout << "object-history for " << object_name << " ("
+               << (merged.ordered_by_hlc ? "ordered by HLC" : "ordered by elapsed_ns, best-effort") << "):\n";
+    for (auto const& entry : merged.entries) {
+        std::cout << entry.field_name << "  ";
+        print_event(*entry.event, entry.shape);
+    }
+    return 0;
+}
+
+// docs/adr/0034-object-snapshot.md ("Layer 5" -- "one slider, entire
+// object"): reconstructs every field's value under `object_name` as of
+// `position` (an index into the object's own merged, chronologically-
+// ordered event log -- the same log `object-history` prints in full).
+// Position, not a raw version or timestamp: cross-stream version numbers
+// have no shared meaning (ADR 0003), and this stays honest about that by
+// making "the slider" an ordinal into the one merge this project can
+// actually justify (chronicle_cli::merge_object_history), not a
+// fabricated absolute clock position.
+int cmd_object_snapshot(std::string const& path, std::string const& object_name, std::size_t position) {
+    auto const session = load_file(path);
+    auto const groups = chronicle_cli::group_by_object(session);
+    auto const it = std::find_if(groups.begin(), groups.end(),
+                                  [&](auto const& g) { return g.name == object_name; });
+    if (it == groups.end() || it->fields.empty()) {
+        std::cerr << "no such object (or it has no recorded fields): " << object_name << "\n";
+        return 1;
+    }
+
+    auto const merged = chronicle_cli::merge_object_history(*it);
+    if (merged.entries.empty()) {
+        std::cerr << "object has no recorded events: " << object_name << "\n";
+        return 1;
+    }
+    std::size_t const cutoff = std::min(position, merged.entries.size() - 1);
+
+    std::map<std::string, LoadedEvent const*> last_scalar;
+    std::map<std::string, std::uint64_t> max_version;
+    for (std::size_t i = 0; i <= cutoff; ++i) {
+        auto const& entry = merged.entries[i];
+        if (entry.shape == StreamShape::Scalar) {
+            last_scalar[entry.field_name] = entry.event;
+        } else {
+            auto& mv = max_version[entry.field_name];
+            mv = std::max(mv, entry.event->version);
         }
     }
 
-    if (all_hlc_known) {
-        std::sort(merged.begin(), merged.end(),
-                  [](MergedEntry const& a, MergedEntry const& b) { return a.event->hlc < b.event->hlc; });
-    } else {
-        std::sort(merged.begin(), merged.end(), [](MergedEntry const& a, MergedEntry const& b) {
-            return a.event->elapsed_ns < b.event->elapsed_ns;
-        });
-    }
-
-    std::cout << "object-history for " << object_name << " ("
-               << (all_hlc_known ? "ordered by HLC" : "ordered by elapsed_ns, best-effort") << "):\n";
-    for (auto const& entry : merged) {
-        std::cout << entry.field_name << "  ";
-        print_event(*entry.event, entry.shape);
+    std::cout << "object-snapshot for " << object_name << " at position " << cutoff << " of "
+               << (merged.entries.size() - 1) << " ("
+               << (merged.ordered_by_hlc ? "ordered by HLC" : "ordered by elapsed_ns, best-effort") << "):\n";
+    for (auto const* field : it->fields) {
+        std::cout << "  " << field->name << ": ";
+        if (field->shape == StreamShape::Scalar) {
+            auto found = last_scalar.find(field->name);
+            std::cout << (found == last_scalar.end() ? "(not yet recorded)"
+                                                       : to_display_string(found->second->value))
+                       << "\n";
+            continue;
+        }
+        auto found = max_version.find(field->name);
+        if (found == max_version.end()) {
+            std::cout << "(not yet recorded)\n";
+            continue;
+        }
+        if (field->shape == StreamShape::IndexedOp) {
+            auto const values = replay_indexed(*field, found->second);
+            std::cout << "[";
+            for (std::size_t i = 0; i < values.size(); ++i) {
+                if (i != 0) std::cout << ", ";
+                std::cout << to_display_string(values[i]);
+            }
+            std::cout << "]\n";
+        } else {
+            auto const kvs = replay_keyed(*field, found->second);
+            std::cout << "{";
+            for (std::size_t i = 0; i < kvs.size(); ++i) {
+                if (i != 0) std::cout << ", ";
+                std::cout << to_display_string(kvs[i].first) << ": " << to_display_string(kvs[i].second);
+            }
+            std::cout << "}\n";
+        }
     }
     return 0;
 }
@@ -325,6 +378,7 @@ void print_usage() {
                  "  chronicle-cli merge <output.chronicle> <tag1>:<file1> [<tag2>:<file2> ...]\n"
                  "  chronicle-cli objects <file>\n"
                  "  chronicle-cli object-history <file> <object-name>\n"
+                 "  chronicle-cli object-snapshot <file> <object-name> <position>\n"
                  "  chronicle-cli export --html <file> <output.html>\n"
                  "  chronicle-cli export --perfetto <file> <output.json>\n"
 #ifdef CHRONICLE_CLI_HAVE_HTTPLIB
@@ -362,6 +416,9 @@ int main(int argc, char** argv) {
         }
         if (args[0] == "object-history" && args.size() == 3) {
             return cmd_object_history(args[1], args[2]);
+        }
+        if (args[0] == "object-snapshot" && args.size() == 4) {
+            return cmd_object_snapshot(args[1], args[2], static_cast<std::size_t>(std::stoull(args[3])));
         }
         if (args[0] == "export" && args.size() == 4 && args[1] == "--html") {
             return cmd_export_html(args[2], args[3]);
