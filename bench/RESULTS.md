@@ -133,3 +133,21 @@ establish whether the single-threaded regression is worth optimizing away
 (e.g. by caching the ring pointer somewhere cheaper than a `thread_local`
 map) — a legitimate follow-up, not attempted here since it wasn't measured
 as a problem until this pass.
+
+## `chronicle::set_with_stacktrace()` cost ([ADR 0032](../docs/adr/0032-provenance-stacktrace.md))
+
+**116,787.63 ns/op** (10,000 iterations, real, on this same dev machine) —
+against 63-91 ns/op for a plain tracked assignment above, that's roughly
+**1,300-1,850x** the cost of a normal write. This is not a rough estimate:
+`entry.description()`/`entry.source_file()` are called eagerly for every
+captured frame (see `chronicle::provenance::capture_current_stacktrace()`),
+so the number includes full symbol resolution, not just raw address
+capture — the realistic cost of actually using this feature, not a
+best-case lower bound.
+
+This single number is why `set_with_stacktrace()` is a separate,
+differently-named, explicit opt-in rather than a `Session::Config` flag
+like `causal_clock` — at three orders of magnitude past even the most
+expensive existing opt-in feature (`causal_clock`'s ~30-50% overhead),
+wiring this into any default path would silently turn a microsecond-scale
+program into a millisecond-scale one the moment it's enabled.

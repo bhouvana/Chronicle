@@ -116,6 +116,26 @@ BenchResult bench_tracked_assignment_causal_clock() {
             "tracked<int>::operator= (causal_clock enabled)", ns};
 }
 
+// docs/adr/0032-provenance-stacktrace.md: chronicle::set_with_stacktrace()
+// captures a full std::stacktrace on every call -- a real, measured order
+// of magnitude past causal_clock's cost above, which is exactly why it's a
+// separate, differently-named, deliberate opt-in rather than a
+// Session::Config flag. Fewer iterations than the other benchmarks
+// (10,000 vs 1,000,000): this path is ~150-200x slower, so matching
+// iteration counts would make this single benchmark dominate the whole
+// suite's runtime for no extra precision this rare-use path needs.
+BenchResult bench_set_with_stacktrace() {
+    chronicle::Session session;
+    chronicle::tracked<int> value{0};
+    chronicle::track(value, session, "bench.tracked_stacktrace");
+    int counter = 0;
+    double const ns = time_ns_per_op(10'000, [&] {
+        chronicle::set_with_stacktrace(value, counter++);
+        g_sink = value.get();
+    });
+    return {"set_with_stacktrace", "chronicle::set_with_stacktrace<int>()", ns};
+}
+
 BenchResult bench_history_query(std::size_t log_size) {
     // Unbounded retention + periodic drains so `log_size` events genuinely
     // land in the durable log (RingWindow's default 1024 cap would silently
@@ -240,6 +260,7 @@ int main(int argc, char** argv) {
     results.push_back(bench_tracked_assignment_ring_window());
     results.push_back(bench_tracked_assignment_unbounded());
     results.push_back(bench_tracked_assignment_causal_clock());
+    results.push_back(bench_set_with_stacktrace());
     results.push_back(bench_history_query(10));
     results.push_back(bench_history_query(1'000));
     results.push_back(bench_history_query(100'000));

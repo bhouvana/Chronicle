@@ -9,6 +9,7 @@
     "tracked_assignment_ring_window_1024_single_threaded": 55.04,
     "tracked_assignment_unbounded_single_threaded": 55.34,
     "tracked_assignment_causal_clock_single_threaded": 95.0,
+    "set_with_stacktrace": 116787.63,
     "history_query_100000_events": 1472490.0,
     "contended_record_1_thread_aggregate": 45.86,
     "contended_record_2_threads_aggregate": 34.92,
