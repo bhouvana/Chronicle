@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(chronicle
-    VERSION 2.1.2
+    VERSION 2.1.3
     DESCRIPTION "Time travel for runtime state"
     HOMEPAGE_URL "https://github.com/bhouvana/Chronicle"
     LANGUAGES CXX
@@ -53,19 +53,33 @@ if(CHRONICLE_IS_TOP_LEVEL)
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/chronicle
     )
 
+    # find_package()'s Config-mode search constructs the filename to look
+    # for using the exact case of the name argument passed to it -- and
+    # every doc/example in this project calls find_package(chronicle
+    # CONFIG), lowercase, matching project(chronicle ...) above. The
+    # generated file must therefore be named chronicleConfig.cmake, not
+    # ChronicleConfig.cmake: harmless on Windows/macOS's case-insensitive
+    # filesystems (which is why this passed every consumer-project check
+    # done on this Windows-only development machine), but a real,
+    # confirmed failure on any case-sensitive filesystem -- reproduced
+    # directly on a real ext4 volume (WSL) before this fix, not assumed.
+    # ChronicleTargets.cmake below is unaffected: it's only ever
+    # include()'d from this project's own generated config file with a
+    # hardcoded, matching-case path, never looked up by find_package()'s
+    # own case-sensitive name-construction rule.
     configure_package_config_file(
         ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ChronicleConfig.cmake.in
-        ${CMAKE_CURRENT_BINARY_DIR}/ChronicleConfig.cmake
+        ${CMAKE_CURRENT_BINARY_DIR}/chronicleConfig.cmake
         INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/chronicle
     )
     write_basic_package_version_file(
-        ${CMAKE_CURRENT_BINARY_DIR}/ChronicleConfigVersion.cmake
+        ${CMAKE_CURRENT_BINARY_DIR}/chronicleConfigVersion.cmake
         VERSION ${PROJECT_VERSION}
         COMPATIBILITY SameMajorVersion
     )
     install(FILES
-        ${CMAKE_CURRENT_BINARY_DIR}/ChronicleConfig.cmake
-        ${CMAKE_CURRENT_BINARY_DIR}/ChronicleConfigVersion.cmake
+        ${CMAKE_CURRENT_BINARY_DIR}/chronicleConfig.cmake
+        ${CMAKE_CURRENT_BINARY_DIR}/chronicleConfigVersion.cmake
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/chronicle
     )
 endif()

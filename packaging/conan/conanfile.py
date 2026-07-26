@@ -8,7 +8,7 @@ from conan.tools.layout import basic_layout
 
 class ChronicleConan(ConanFile):
     name = "chronicle"
-    version = "2.1.2"
+    version = "2.1.3"
     description = (
         "Time travel for runtime state: a C++23 header-only library for "
         "recording, querying, and replaying the history of tracked "
