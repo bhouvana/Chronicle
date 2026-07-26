@@ -43,7 +43,7 @@ See [docs/07-api-design.md](docs/07-api-design.md) for the full public surface.
 include(FetchContent)
 FetchContent_Declare(
     chronicle
-    URL https://github.com/bhouvana/Chronicle/archive/refs/tags/v2.1.1.tar.gz
+    URL https://github.com/bhouvana/Chronicle/archive/refs/tags/v2.1.2.tar.gz
 )
 FetchContent_MakeAvailable(chronicle)
 
@@ -75,7 +75,7 @@ vcpkg install chronicle --overlay-ports=path/to/Chronicle/packaging/vcpkg
 Conan Center submission is in progress.
 
 ```sh
-conan create packaging/conan --version 2.1.1
+conan create packaging/conan --version 2.1.2
 ```
 
 Requires a C++23 compiler. CI builds and tests against MSVC, GCC, and Clang on
