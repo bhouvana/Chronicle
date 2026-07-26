@@ -17,6 +17,18 @@ Chronicle's bet is that a single recording substrate can underlie all of
 them — not by building each one, but by making "what changed, when, why,
 and as part of what" answerable once, well, and reused everywhere.
 
+**Status as of this cycle**: Layers 1-5 and 7 are done or partially done,
+each with a real, verified, honestly-scoped feature and an ADR. Layer 8 is
+extended. Layer 6 is explicitly capped pending new evidence. Layers 9 and
+10 remain deliberately unbuilt — 9 because it's real scope only through
+bridging (each new bridge its own decision, not attempted speculatively
+here), 10 because it's an emergent property of the others, not a
+workstream. Nothing here reopens or reverses a decision this project's
+ADRs already made; every new layer either extended an existing extension
+point (`RecordHook`, the `(stream_id, version)` registry pattern) or added
+a small, additive, real capability with its own measured cost where one
+existed to measure.
+
 ## Layer 1 — State Recording — **done** (v0.1 onward)
 `tracked<T>`/`tracked_vector<T>`/`tracked_map<K,V>`, `history()`/
 `snapshot()`/`diff()`/`replay`. This is [10-roadmap.md](10-roadmap.md)'s
@@ -68,10 +80,18 @@ once), and persistence — shared with Layer 3's provenance follow-on, since
 both are in-process-only for the same underlying reason (no wire-format
 support for arbitrary per-event side-channel data yet).
 
-## Layer 5 — Object Time Machine — mostly done, compositionally
-`history(player)` instead of one field at a time is exactly
-`object-history` (ADR 0031). A visual "scrub through one object" is Layer
-2 + the existing per-field replay + a UI, not a new mechanism.
+## Layer 5 — Object Time Machine — **done** (this cycle) — [ADR 0034](adr/0034-object-snapshot.md)
+`history(player)` instead of one field at a time is `object-history`
+(ADR 0031); "one slider, entire object" is now real too:
+`chronicle-cli object-snapshot <file> <object> <position>` reconstructs
+every field's full value at a position in the object's own merged
+history log. `position` is deliberately an index into that merge, not a
+fabricated absolute clock — per-stream versions have no shared meaning
+(ADR 0003), so the slider is honestly "the one merge this project can
+justify," not an independent timeline. Still text-mode, not a visual
+scrubber — a real browser-UI version is Layer 2/5 + a UI, genuinely
+separate (and smaller) future work if the interactive viewer
+(ADR 0016) is ever extended to read `object-snapshot`'s same logic.
 
 ## Layer 6 — Program Time Machine — **explicitly cautioned, do not attempt without new evidence**
 "Rewind the entire application — memory, objects, containers, everything"
@@ -92,21 +112,25 @@ Chronicle actually instruments, honestly labeled as best-effort across
 threads," not "everything, memory included" — reopening the literal
 version needs new evidence, not renewed ambition.**
 
-## Layer 7 — Live Queries — open direction
-"Which variable changed most today," "show all writes from thread 6" —
-a query language over `LoadedSession`/live `Session` data. Buildable
-incrementally on top of Layers 1-3; no new recording mechanism needed,
-just a richer query surface than today's fixed CLI subcommands.
+## Layer 7 — Live Queries — **partially done** (this cycle) — [ADR 0035](adr/0035-live-queries.md)
+"Which variable changed most," "show all writes from thread 6" are real
+now: `chronicle-cli query most-changed`/`threads`/`thread <index>`.
+Deliberately three concrete, bounded answers, not a general query
+language — "which object allocates the most memory," "when did this
+invariant first fail" (this layer's other named examples) remain open,
+real, separately-scoped candidates if pursued, not solved by a generic
+query engine.
 
-## Layer 8 — Event Intelligence — partially done — [ADR 0026](adr/0026-anomaly-detection.md)
-`range_anomalies()` (this cycle) is exactly the "oscillating state,"
-"always grows, never shrinks" pattern-detection this layer asks for,
-generalized as a causal online z-score. docs/12 topic 8's own caution
-still applies at any larger scope: real risk of becoming a distraction
-from the core value proposition if pursued before the query/replay
-experience is proven in the wild. Extend incrementally (rate-of-change
-detectors, container-shape anomalies), don't chase "AI" framing beyond
-what's actually statistical.
+## Layer 8 — Event Intelligence — **extended** (this cycle) — [ADR 0026](adr/0026-anomaly-detection.md)
+`range_anomalies()` (numeric, causal z-score) plus, this cycle,
+`container_growth_report()`/`is_likely_leak()` — the exact "size always
+grows, never shrinks... possible leak" structural/shape example this
+layer named, for `tracked_vector<T>`. docs/12 topic 8's own caution still
+applies at any larger scope: real risk of becoming a distraction from the
+core value proposition if pursued before the query/replay experience is
+proven in the wild. Remaining open direction: rate-of-change detectors
+(derivative, not just level); still explicitly not chasing "AI" framing
+beyond what's actually statistical.
 
 ## Layer 9 — Runtime Knowledge Graph — open direction, via bridging not reimplementation
 Network, GPU, filesystem, coroutines as streams. Achieved by *bridging* to
@@ -126,4 +150,11 @@ When picking up this vision again: check which layer is genuinely next
 given what exists (the same exercise that picked Layer 2 this cycle —
 look for what's already seeded, per ADR 0016 → ADR 0031's pattern), hold
 every new layer to this project's real, measure-don't-assume standard, and
-treat the Layer 6 caution above as a hard gate, not a suggestion.
+treat the Layer 6 caution above as a hard gate, not a suggestion. The
+real, concretely-scoped remaining work, in rough priority order: (1)
+persistence for Layers 3/4's in-process-only registries (one shared
+wire-format decision, not two), (2) composable multi-hook dispatch on
+`RecordHook` (unblocks Layer 4's single-hook limit and lets provenance/
+derivation/Tracy coexist on one field), (3) Layer 7's remaining named
+queries, (4) a real, evaluated first bridge for Layer 9 if one is worth
+building. None of these require reopening Layer 6.
