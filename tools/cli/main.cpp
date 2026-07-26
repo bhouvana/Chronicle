@@ -11,6 +11,7 @@
 #include "diff_runs.hpp"
 #include "html_export.hpp"
 #include "merge.hpp"
+#include "object_graph.hpp"
 #include "perfetto_export.hpp"
 #include "replay.hpp"
 #include "serve.hpp"
@@ -243,6 +244,78 @@ int cmd_merge(std::string const& output_path, std::vector<std::string> const& ta
     return 0;
 }
 
+// docs/adr/0031-object-graph.md ("Layer 2"): a CLI-visible version of what
+// ADR 0016's browser viewer already shows in its Objects panel, grouped by
+// chronicle::object_name_of() (tools/cli/object_graph.cpp).
+int cmd_objects(std::string const& path) {
+    auto const session = load_file(path);
+    auto const groups = chronicle_cli::group_by_object(session);
+    for (auto const& group : groups) {
+        std::size_t total_events = 0;
+        for (auto const* field : group.fields) {
+            total_events += field->events.size();
+        }
+        std::cout << group.name << "  (" << group.fields.size() << " field(s), " << total_events
+                   << " event(s) total)\n";
+        for (auto const* field : group.fields) {
+            std::cout << "    " << field->name << "  [" << shape_name(field->shape) << "]  "
+                       << field->events.size() << " event(s)\n";
+        }
+    }
+    return 0;
+}
+
+// Merges every field under `object_name` into one chronologically-ordered
+// log -- a text-mode "scrub through this whole object's history" (the
+// user's Layer 5 ask), not just one field at a time. Best-effort ordering
+// across independent streams: prefers the HLC (ADR 0019's one real
+// cross-stream-comparable ordinal) only when EVERY merged event has one;
+// otherwise falls back to elapsed_ns. Never claims stronger cross-stream
+// ordering than ADR 0003/0019 already established.
+int cmd_object_history(std::string const& path, std::string const& object_name) {
+    auto const session = load_file(path);
+    auto const groups = chronicle_cli::group_by_object(session);
+    auto const it = std::find_if(groups.begin(), groups.end(),
+                                  [&](auto const& g) { return g.name == object_name; });
+    if (it == groups.end() || it->fields.empty()) {
+        std::cerr << "no such object (or it has no recorded fields): " << object_name << "\n";
+        return 1;
+    }
+
+    struct MergedEntry {
+        std::string field_name;
+        LoadedEvent const* event;
+        StreamShape shape;
+    };
+    std::vector<MergedEntry> merged;
+    bool all_hlc_known = true;
+    for (auto const* field : it->fields) {
+        for (auto const& event : field->events) {
+            merged.push_back(MergedEntry{field->name, &event, field->shape});
+            if (!is_known(event.hlc)) {
+                all_hlc_known = false;
+            }
+        }
+    }
+
+    if (all_hlc_known) {
+        std::sort(merged.begin(), merged.end(),
+                  [](MergedEntry const& a, MergedEntry const& b) { return a.event->hlc < b.event->hlc; });
+    } else {
+        std::sort(merged.begin(), merged.end(), [](MergedEntry const& a, MergedEntry const& b) {
+            return a.event->elapsed_ns < b.event->elapsed_ns;
+        });
+    }
+
+    std::cout << "object-history for " << object_name << " ("
+               << (all_hlc_known ? "ordered by HLC" : "ordered by elapsed_ns, best-effort") << "):\n";
+    for (auto const& entry : merged) {
+        std::cout << entry.field_name << "  ";
+        print_event(*entry.event, entry.shape);
+    }
+    return 0;
+}
+
 void print_usage() {
     std::cout << "usage:\n"
                  "  chronicle-cli list <file>\n"
@@ -250,6 +323,8 @@ void print_usage() {
                  "  chronicle-cli diff <file> <stream-name> <version-a> <version-b>\n"
                  "  chronicle-cli diff-runs <file-a> <file-b>\n"
                  "  chronicle-cli merge <output.chronicle> <tag1>:<file1> [<tag2>:<file2> ...]\n"
+                 "  chronicle-cli objects <file>\n"
+                 "  chronicle-cli object-history <file> <object-name>\n"
                  "  chronicle-cli export --html <file> <output.html>\n"
                  "  chronicle-cli export --perfetto <file> <output.json>\n"
 #ifdef CHRONICLE_CLI_HAVE_HTTPLIB
@@ -281,6 +356,12 @@ int main(int argc, char** argv) {
         }
         if (args[0] == "merge" && args.size() >= 3) {
             return cmd_merge(args[1], std::vector<std::string>(args.begin() + 2, args.end()));
+        }
+        if (args[0] == "objects" && args.size() == 2) {
+            return cmd_objects(args[1]);
+        }
+        if (args[0] == "object-history" && args.size() == 3) {
+            return cmd_object_history(args[1], args[2]);
         }
         if (args[0] == "export" && args.size() == 4 && args[1] == "--html") {
             return cmd_export_html(args[2], args[3]);
