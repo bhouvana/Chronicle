@@ -250,6 +250,4 @@ above — see the linked ADRs for what was actually run and what it showed.
 
 ## License
 
-To be decided (leaning permissive — MIT or Apache-2.0 — see
-[docs/11-repository-structure-and-standards.md](docs/11-repository-structure-and-standards.md#contribution--governance-baseline));
-no LICENSE file is present yet.
+[Apache License 2.0](LICENSE).
