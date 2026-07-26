@@ -6,29 +6,25 @@ Chronicle is a proposed modern C++ library for recording, querying, diffing, and
 replaying the history of runtime state — objects, containers, ECS worlds, or
 custom domain state — from inside your own process, without a debugger attached.
 
-> **Status: v0.1 through v2.0 all shipped; ADR 0004 perf gap closed.**
+> **Status: v0.1 through v2.0 all shipped, plus a full research/vision
+> cycle beyond it — 43 ADRs, all verified for real.**
 > Research/architecture/design concluded first, per this project's own
 > standard. `tracked<T>`, `tracked_vector<T>`, `tracked_map<K,V>`, an
-> on-disk `.chronicle` format, `chronicle-cli`, a self-contained HTML
-> timeline viewer, a lock-free per-thread ring buffer replacing v0.1's
-> mutex, and (v0.5) causal-chain queries (`chronicle::last_writer()`,
-> call-site capture), a Clang-based codegen tool, and a live Tracy bridge
-> all build and are unit-tested, verified end-to-end —
-> as separate producer/consumer processes, in an actual browser via
-> Playwright, headlessly against a real Tracy capture tool, and under
-> AddressSanitizer (see
-> [Where things stand](#where-things-stand)). Two real language/toolchain
-> constraints were discovered and worked around during this work, not
-> assumed away: a member `operator=` cannot capture its own call site (a
-> hard compile error, not a style choice — [ADR 0010](docs/adr/0010-call-site-capture.md)),
-> and the ring buffer work caught two real concurrency bugs no
-> single-threaded test could have found
-> ([ADR 0009](docs/adr/0009-lock-free-ring-buffer.md), which also reports
-> an honest performance finding: not simply "faster," it trades
-> single-threaded speed for multi-threaded scalability, both numbers
-> published). Serialization separately avoids `StreamBase` virtual dispatch
-> for a real correctness reason
-> ([ADR 0008](docs/adr/0008-cli-avoids-streambase-virtual-dispatch.md)).
+> on-disk `.chronicle` format (now at format v5), `chronicle-cli`, a
+> self-contained HTML timeline viewer, a lock-free per-thread ring buffer,
+> causal-chain queries, a Clang-based codegen tool, and a live Tracy bridge
+> make up the v0.1–v2.0 core (detailed in [Where things stand](#where-things-stand)).
+> Beyond that, this project completed [docs/12](docs/12-future-research-topics.md)'s
+> full 8-topic research backlog and a 10-layer long-horizon vision
+> ([docs/13-vision.md](docs/13-vision.md)) turning Chronicle from a
+> recording library into an object-graph-aware, self-explaining, rule-
+> verifying runtime history platform — see
+> [What Chronicle can do today](#what-chronicle-can-do-today) for the
+> capability tour, or the [full changelog](#beyond-v20-the-research-and-vision-cycle)
+> for what shipped and why. Every feature was verified against something
+> real (a real running process, a real generated file, a real independent
+> JSON parser, a real Tracy capture, a real racing pair of threads) — see
+> the linked ADRs for the actual evidence, not just the claim.
 
 ## The core idea
 
@@ -53,6 +49,57 @@ for (auto const& rec : chronicle::history(player.health)) {
 
 See [docs/07-api-design.md](docs/07-api-design.md) for the fuller surface.
 
+## What Chronicle can do today
+
+Beyond recording and querying one field, the object graph / provenance /
+rules work (`docs/13-vision.md`) means Chronicle can now:
+
+- **Group fields into objects** by naming convention and reconstruct one
+  object's — or the whole program's — entire state at any point:
+  `chronicle-cli object-snapshot <file> player 42`, `program-snapshot`.
+- **Explain why a value is what it is**: `chronicle::set_with_stacktrace()`
+  captures a full call chain (not just one call site);
+  `chronicle::derive()`/`explain()` auto-recomputes a field from others and
+  says which dependency actually changed. Both persist to disk (format v5)
+  and show up in `chronicle-cli narrate`.
+- **Flag anomalies**: `possible_race()` (cross-thread proximity),
+  `range_anomalies()` (statistical outliers), `container_growth_report()`/
+  `is_likely_leak()` (containers that only ever grow).
+- **Verify runtime expectations, not just observe them**:
+  `chronicle::rules::check_rule()` (offline) and `chronicle::watch()`
+  (live) — a predicate over a field, checked after the fact or as it
+  happens, composable with `derive()`/Tracy on the same field.
+- **Diff and merge across runs and processes**: `chronicle-cli diff-runs`
+  (compare two recordings of "the same scenario"), `merge` (combine
+  multiple processes' files, no fabricated cross-process ordering).
+- **Get a one-command health report**: `chronicle-cli doctor <file>` runs
+  every detector and exits non-zero if it finds something — a real CI gate.
+- **Emit structured output for tooling/AI**: `--json` on
+  `objects`/`doctor`/`narrate`.
+- **Run on constrained targets**: `chronicle::embedded::TrackedScalar` —
+  fixed-capacity, zero-heap-allocation history.
+- **Bridge to the outside world**: EnTT, PMR allocators, Tracy (live
+  plotting), Perfetto export, real filesystem I/O, and (Windows, opt-in)
+  address-filtered `memcpy` interposition.
+
+```sh
+# doctor: one command, tells you what's wrong
+./build/tools/cli/chronicle-cli doctor session.chronicle
+
+# narrate: why is this object's state what it is right now
+./build/tools/cli/chronicle-cli narrate session.chronicle player 42
+
+# same commands, grouped and machine-readable
+./build/tools/cli/chronicle-cli analyze doctor session.chronicle --json
+```
+
+Every capability above has a corresponding ADR with real, run verification
+behind it — see [Beyond v2.0](#beyond-v20-the-research-and-vision-cycle) or
+[docs/13-vision.md](docs/13-vision.md) for the full account, including
+what was deliberately *not* built and why (a general query language, full
+deterministic replay, GPU/network bridges — each evaluated, not silently
+skipped).
+
 ## Document map
 
 This is a research-and-design-first project. Read in this order:
@@ -70,7 +117,8 @@ This is a research-and-design-first project. Read in this order:
 | 9 | [Performance Engineering](docs/09-performance.md) | Budgets, techniques, and measurement discipline |
 | 10 | [Roadmap](docs/10-roadmap.md) | v0.1 → v2.0, each milestone independently useful |
 | 11 | [Repository Structure & Standards](docs/11-repository-structure-and-standards.md) | Layout, build, CI, testing, contribution standards |
-| 12 | [Future Research Topics](docs/12-future-research-topics.md) | Open questions deliberately not committed to a roadmap |
+| 12 | [Future Research Topics](docs/12-future-research-topics.md) | Open questions deliberately not committed to a roadmap — all 8 now evaluated, most shipped |
+| 13 | [Vision](docs/13-vision.md) | The 10-layer long-horizon framing (object graph, provenance, derived state, rules, ...) — status per layer, what's deliberately capped and why |
 
 Design decisions are additionally recorded as they're made:
 - [docs/adr/](docs/adr/) — Architecture Decision Records (why, once, never re-litigated)
@@ -92,6 +140,12 @@ ctest --test-dir build --output-on-failure   # unit tests
 ./build/tools/cli/chronicle-cli history demo.chronicle player.health
 ./build/tools/cli/chronicle-cli diff demo.chronicle player.inventory 1 3
 ./build/tools/cli/chronicle-cli export --html demo.chronicle demo.html   # open demo.html in any browser
+
+# object graph / narrative / health-report tooling (docs/13-vision.md) --
+# also reachable grouped: `chronicle-cli inspect objects demo.chronicle`
+./build/tools/cli/chronicle-cli objects demo.chronicle
+./build/tools/cli/chronicle-cli narrate demo.chronicle player 5
+./build/tools/cli/chronicle-cli doctor demo.chronicle --json
 ```
 
 Requires a C++23 compiler (verified against Clang 21). `chronicle-core` is
@@ -140,6 +194,59 @@ See [docs/02-competitive-gap-analysis.md](docs/02-competitive-gap-analysis.md#ex
 - [x] Deterministic multithreaded replay research spike (v2.0, evaluated per the roadmap's own "not a commitment" framing): all three candidate approaches from [docs/12](docs/12-future-research-topics.md#1-deterministic-multithreaded-replay) assessed against real evidence from this cycle — a global happens-before graph (partially built as the HLC above; its real ~30-50% cost for even the smallest useful slice argues against extending it), an rr-style deterministic scheduler underneath Chronicle (not attempted, ruled out architecturally — conflicts with the source-level-only instrumentation choice docs/03/04 made before v0.1), and permanent best-effort status plus flagging apparent races (the recommended path, now cheaper thanks to the HLC). **No v3 commitment to full deterministic replay.**
 
 **v2.0 is now fully shipped.**
+
+## Beyond v2.0: the research and vision cycle
+
+Two further cycles of work, each evaluated before anything shipped, per
+this project's standing rule that `docs/12` topics get *evaluated*, not
+built by default — both explicitly authorized to ship anyway. Full detail,
+including what's deliberately capped and why, lives in
+[docs/12](docs/12-future-research-topics.md) and
+[docs/13-vision.md](docs/13-vision.md); ADRs 0023–0043 have the real
+verification evidence for every item below.
+
+**`docs/12`'s 8-topic research backlog — 7 shipped, 1 honestly walled off**:
+`possible_race()` (ADR 0023); a cost-model estimator reading real
+benchmark data (ADR 0024); `chronicle-cli diff-runs` for cross-run
+diffing (ADR 0025); a container growth/leak detector (extends ADR 0026);
+`chronicle::embedded::TrackedScalar`, a zero-heap-allocation tier (ADR
+0027); `chronicle-cli merge` for multi-process files, no fabricated
+cross-process ordering (ADR 0028); Windows address-filtered `memcpy`
+interposition via Detours, with a real, honestly-labeled-untested Linux
+LD_PRELOAD sketch (ADR 0029). C++26 static reflection (P2996) was
+**verified as a real environmental wall**, not implemented — neither
+MSVC 19.44 nor Clang 21.1.6 define `__cpp_reflection` (ADR 0030).
+
+**A 10-layer long-horizon vision, all 10 given a real disposition**:
+object/ownership graph (ADR 0031), full call-chain provenance via
+`std::stacktrace` (ADR 0032, ~116µs/capture measured — why it's a
+deliberate opt-in, never automatic), `derive()`/`explain()` reactive
+derived state (ADR 0033), object/program snapshot-at-a-position (ADR
+0034/0036), three concrete live queries — not a general query language,
+a decision made deliberately (ADR 0035), a filesystem bridge verified
+against a real temp file (ADR 0037), a narrative composer combining all
+of the above (ADR 0038), format v5 persistence for provenance/derivation
+(ADR 0039), and composable multi-hook `RecordHook` dispatch verified live
+against a real Tracy capture (ADR 0040). **Full deterministic
+whole-program replay stays explicitly capped** — evaluated with real
+measured evidence (docs/12 topic 1) and not reopened without new evidence,
+a hard gate this project holds itself to, not a suggestion.
+
+**A platform-primitives round** (from a "what can the ecosystem build on
+Chronicle" review): `chronicle-cli doctor`, a one-command whole-file
+health report whose exit code is a real CI gate (ADR 0041); `chronicle::rules::check_rule()`/
+`chronicle::watch()`, runtime verification built on the same composable
+hook mechanism (ADR 0041); `--json` output for AI/tool consumption,
+validated with a real independent parser (ADR 0042); `inspect`/`compare`/
+`analyze` as additive CLI verb prefixes, zero breaking changes (ADR 0043).
+A proposed general query language/IR was evaluated and **deferred a
+second time** — a real, separate, database-engine-scale project given
+Chronicle's live/offline data-model fork, better justified by real
+evidence than designed speculatively.
+
+Full test suite as of this cycle: **446/446 checks across 115 tests**,
+plus real end-to-end verification (not just unit tests) for every feature
+above — see the linked ADRs for what was actually run and what it showed.
 
 ## License
 
