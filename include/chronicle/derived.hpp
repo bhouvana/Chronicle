@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -29,11 +30,10 @@
 // hot path.
 //
 // SCOPE, STATED UP FRONT:
-// - RecordHook is single-slot per stream (stream.hpp's own comment: "only
-//   one hook at a time is supported deliberately"). A dependency field
-//   that already has a Tracy-bridge hook (or any other hook) attached
-//   cannot simultaneously feed a Derivation -- real, documented
-//   limitation, not silently overwritten.
+// - docs/adr/0040-composable-record-hooks.md: RecordHook is no longer
+//   single-slot -- a dependency field already carrying a Tracy-bridge
+//   hook (or any other hook) can now also feed a Derivation, via
+//   add_record_hook()/remove_record_hook() instead of set_record_hook().
 // - No derived-of-derived: a Derivation's dependencies must be plain
 //   tracked<T> fields, not another Derivation's target. Avoids real,
 //   harder problems (cycle detection, recomputation ordering across a
@@ -130,19 +130,24 @@ private:
         (detach_one<I>(), ...);
     }
 
+    static constexpr std::size_t kNotAttached = static_cast<std::size_t>(-1);
+
     template <std::size_t I>
     void attach_one() {
         using Dep = std::tuple_element_t<I, std::tuple<Deps...>>;
         auto* stream = std::get<I>(deps_)->stream();
         if (stream != nullptr) {
-            stream->set_record_hook(&Derivation::hook_trampoline<I, Dep>, this);
+            hook_handles_[I] = stream->add_record_hook(&Derivation::hook_trampoline<I, Dep>, this);
         }
     }
     template <std::size_t I>
     void detach_one() {
+        if (hook_handles_[I] == kNotAttached) {
+            return;
+        }
         auto* stream = std::get<I>(deps_)->stream();
         if (stream != nullptr) {
-            stream->set_record_hook(nullptr, nullptr);
+            stream->remove_record_hook(hook_handles_[I]);
         }
     }
 
@@ -189,6 +194,16 @@ private:
     ComputeFn compute_;
     std::tuple<tracked<Deps>*...> deps_;
     std::tuple<Deps...> last_values_;
+    // One add_record_hook() handle per dependency, so detach_one() removes
+    // exactly this Derivation's own slot -- not whatever else happens to
+    // be attached to that stream (docs/adr/0040-composable-record-hooks.md).
+    // kNotAttached for a dependency whose stream() was null at construction.
+    std::array<std::size_t, sizeof...(Deps)> hook_handles_{
+        [] {
+            std::array<std::size_t, sizeof...(Deps)> handles;
+            handles.fill(kNotAttached);
+            return handles;
+        }()};
 };
 
 } // namespace chronicle::derived
