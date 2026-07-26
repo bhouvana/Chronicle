@@ -17,3 +17,14 @@ target_compile_features(chronicle-core INTERFACE cxx_std_23)
 
 find_package(Threads REQUIRED)
 target_link_libraries(chronicle-core INTERFACE Threads::Threads)
+
+if(CHRONICLE_IS_TOP_LEVEL)
+    include(GNUInstallDirs)
+
+    install(TARGETS chronicle-core
+        EXPORT ChronicleTargets
+    )
+    install(DIRECTORY ${CMAKE_SOURCE_DIR}/include/
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    )
+endif()

@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(chronicle
-    VERSION 0.1.0
+    VERSION 2.1.0
     DESCRIPTION "Time travel for runtime state"
+    HOMEPAGE_URL "https://github.com/bhouvana/Chronicle"
     LANGUAGES CXX
 )
 
@@ -14,10 +15,22 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # this is what the "C/C++ Configuration Warnings" panel is asking for.
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-option(CHRONICLE_BUILD_TESTS "Build chronicle-core unit tests" ON)
-option(CHRONICLE_BUILD_EXAMPLES "Build chronicle examples" ON)
-option(CHRONICLE_BUILD_BENCH "Build chronicle-bench microbenchmark suite" ON)
-option(CHRONICLE_BUILD_TOOLS "Build chronicle-cli" ON)
+# True only when Chronicle is the top-level project being configured, not
+# when it's pulled in via FetchContent/add_subdirectory by someone else's
+# build. Gates the four options below so a consumer doesn't get
+# Chronicle's own tests/examples/bench/CLI force-built into their build --
+# a real, previously-missing prerequisite for being a well-behaved
+# dependency (docs/adr/0044-installable-package.md).
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    set(CHRONICLE_IS_TOP_LEVEL ON)
+else()
+    set(CHRONICLE_IS_TOP_LEVEL OFF)
+endif()
+
+option(CHRONICLE_BUILD_TESTS "Build chronicle-core unit tests" ${CHRONICLE_IS_TOP_LEVEL})
+option(CHRONICLE_BUILD_EXAMPLES "Build chronicle examples" ${CHRONICLE_IS_TOP_LEVEL})
+option(CHRONICLE_BUILD_BENCH "Build chronicle-bench microbenchmark suite" ${CHRONICLE_IS_TOP_LEVEL})
+option(CHRONICLE_BUILD_TOOLS "Build chronicle-cli" ${CHRONICLE_IS_TOP_LEVEL})
 option(CHRONICLE_BUILD_CODEGEN "Build chronicle-codegen (requires a Clang/LLVM CMake package install)" OFF)
 option(CHRONICLE_BUILD_TRACY_EXAMPLE "Build the Tracy bridge example (requires a Tracy CMake package install)" OFF)
 option(CHRONICLE_BUILD_ENTT_ADAPTER "Build chronicle-adapter-entt and its example (requires an EnTT CMake package install)" OFF)
@@ -30,6 +43,32 @@ else()
 endif()
 
 add_subdirectory(src)
+
+if(CHRONICLE_IS_TOP_LEVEL)
+    include(CMakePackageConfigHelpers)
+
+    install(EXPORT ChronicleTargets
+        FILE ChronicleTargets.cmake
+        NAMESPACE chronicle::
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/chronicle
+    )
+
+    configure_package_config_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ChronicleConfig.cmake.in
+        ${CMAKE_CURRENT_BINARY_DIR}/ChronicleConfig.cmake
+        INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/chronicle
+    )
+    write_basic_package_version_file(
+        ${CMAKE_CURRENT_BINARY_DIR}/ChronicleConfigVersion.cmake
+        VERSION ${PROJECT_VERSION}
+        COMPATIBILITY SameMajorVersion
+    )
+    install(FILES
+        ${CMAKE_CURRENT_BINARY_DIR}/ChronicleConfig.cmake
+        ${CMAKE_CURRENT_BINARY_DIR}/ChronicleConfigVersion.cmake
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/chronicle
+    )
+endif()
 
 if(CHRONICLE_BUILD_TESTS)
     enable_testing()
