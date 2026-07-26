@@ -17,17 +17,18 @@ Chronicle's bet is that a single recording substrate can underlie all of
 them — not by building each one, but by making "what changed, when, why,
 and as part of what" answerable once, well, and reused everywhere.
 
-**Status as of this cycle**: Layers 1-5 and 7 are done or partially done,
-each with a real, verified, honestly-scoped feature and an ADR. Layer 8 is
-extended. Layer 6 is explicitly capped pending new evidence. Layers 9 and
-10 remain deliberately unbuilt — 9 because it's real scope only through
-bridging (each new bridge its own decision, not attempted speculatively
-here), 10 because it's an emergent property of the others, not a
-workstream. Nothing here reopens or reverses a decision this project's
-ADRs already made; every new layer either extended an existing extension
-point (`RecordHook`, the `(stream_id, version)` registry pattern) or added
-a small, additive, real capability with its own measured cost where one
-existed to measure.
+**Status as of this cycle**: all 10 layers now have a real disposition
+and, where built, an ADR. Layers 1-5, 6 (scoped), 7 (partial), 9 (one
+bridge), and 10 are done. Layer 8 is extended. Nothing here reopens or
+reverses a decision this project's ADRs already made — Layer 6 was
+completed in its explicitly-scoped form ("rewind everything Chronicle
+instruments," not literal memory-level determinism), Layer 9 shipped
+exactly one bridge that could be verified for real in this environment
+rather than fabricating the others, and Layer 10 composes only data
+that's actually persisted to disk. Every new layer either extended an
+existing extension point (`RecordHook`, the `(stream_id, version)`
+registry pattern, `merge_object_history()`) or added a small, additive,
+real capability with its own measured cost where one existed to measure.
 
 ## Layer 1 — State Recording — **done** (v0.1 onward)
 `tracked<T>`/`tracked_vector<T>`/`tracked_map<K,V>`, `history()`/
@@ -93,24 +94,29 @@ scrubber — a real browser-UI version is Layer 2/5 + a UI, genuinely
 separate (and smaller) future work if the interactive viewer
 (ADR 0016) is ever extended to read `object-snapshot`'s same logic.
 
-## Layer 6 — Program Time Machine — **explicitly cautioned, do not attempt without new evidence**
-"Rewind the entire application — memory, objects, containers, everything"
-is, read literally, full deterministic whole-program replay. This project
-already evaluated exactly this (docs/12 topic 1's v2.0 research spike) and
-found: (a) even a *partial*, pairwise-only HLC slice cost a real, measured
+## Layer 6 — Program Time Machine — **done, in scoped form** (this cycle) — [ADR 0036](adr/0036-whole-program-rewind.md)
+Read literally ("rewind the entire application — memory, objects,
+containers, everything"), this is full deterministic whole-program
+replay — and that literal version remains **explicitly capped, not
+attempted, do not reopen without new evidence**. This project already
+evaluated it (docs/12 topic 1's v2.0 research spike) and found real,
+measured reasons not to: even a *partial*, pairwise-only HLC slice cost
 ~30-50% per-event overhead ([ADR 0019](adr/0019-hybrid-logical-clock.md));
-(b) a full vector-clock/happens-before graph would cost substantially
-more, for a class of value (`possible_race()`, ADR 0023) this project can
-already provide more cheaply; (c) `rr`-style deterministic scheduling
-underneath Chronicle conflicts with the foundational source/API-level-only
+a full vector-clock/happens-before graph would cost substantially more for
+a class of value (`possible_race()`, ADR 0023) this project already
+provides more cheaply; `rr`-style deterministic scheduling underneath
+Chronicle conflicts with the foundational source/API-level-only
 instrumentation choice made before v0.1
-([03-core-idea-and-feasibility.md](03-core-idea-and-feasibility.md),
-[04-technical-limitations.md](04-technical-limitations.md)) — it would
-mean absorbing or reimplementing a different project's worth of scope.
-**If this layer is pursued, it must be scoped down to "rewind everything
-Chronicle actually instruments, honestly labeled as best-effort across
-threads," not "everything, memory included" — reopening the literal
-version needs new evidence, not renewed ambition.**
+([03](03-core-idea-and-feasibility.md)/[04](04-technical-limitations.md)).
+None of that evidence changed this cycle.
+
+What *did* ship is exactly the scoped version this entry always
+prescribed as the honest path: `chronicle-cli program-history`/
+`program-snapshot` — "rewind everything Chronicle actually instruments,
+best-effort across threads," mechanically the same
+`object-history`/`object-snapshot` merge (ADR 0031/0034) applied to every
+stream in the session rather than one object's fields. No new mechanism,
+no reopened architectural question.
 
 ## Layer 7 — Live Queries — **partially done** (this cycle) — [ADR 0035](adr/0035-live-queries.md)
 "Which variable changed most," "show all writes from thread 6" are real
@@ -132,29 +138,58 @@ proven in the wild. Remaining open direction: rate-of-change detectors
 (derivative, not just level); still explicitly not chasing "AI" framing
 beyond what's actually statistical.
 
-## Layer 9 — Runtime Knowledge Graph — open direction, via bridging not reimplementation
-Network, GPU, filesystem, coroutines as streams. Achieved by *bridging* to
+## Layer 9 — Runtime Knowledge Graph — **one real bridge done** (this cycle) — [ADR 0037](adr/0037-filesystem-bridge.md)
+Network, GPU, filesystem, coroutines as streams, achieved by *bridging* to
 existing systems the way the Tracy and Perfetto bridges already do, not by
-Chronicle reimplementing an APM platform. Each new domain (network,
-GPU, ...) is its own scoped bridge, evaluated on its own merits — not a
-single "add everything" effort.
+Chronicle reimplementing an APM platform. This cycle shipped exactly one:
+`chronicle::bridges::TrackedFile`, real file I/O (open/read/write/close)
+as `tracked<FileOp>` events, verified against a real temporary file (a
+real write-then-read round trip, not a stringstream stand-in) — chosen
+specifically because it needed no external dependency and no hardware/OS
+feature this environment couldn't also verify against for real. Network
+and GPU bridges remain real, unattempted future work: each would need an
+actual network stack or GPU context to verify honestly, which fabricating
+without one would violate this project's own "verify for real" standard.
+Each new domain stays its own scoped bridge decision, not a single
+"add everything" effort — this entry is proof of that discipline, not a
+reason to relax it for the remaining three.
 
-## Layer 10 — Engineering Memory — emergent, not a separate workstream
-The "Renderer stalled because Physics waited because Thread 3 blocked..."
-narrative is what Layers 2 + 3 + 9 composed together produce, not a
-mechanism of its own. Don't plan engineering time against "Layer 10"
-directly — it falls out of the others being done well.
+## Layer 10 — Engineering Memory — **done, from persisted data only** (this cycle) — [ADR 0038](adr/0038-narrative-composer.md)
+The "Renderer stalled because Physics waited..." narrative is what Layers
+2 + 3 + 9 composed together would ideally produce — but Layers 3/4's
+registries are in-process only (ADR 0032/0033), so a `.chronicle`-file-based
+narrator genuinely cannot include full call chains or derivation
+explanations, no matter how it's composed. `chronicle-cli narrate`
+composes exactly what *is* persisted: object-snapshot values, real
+per-event call sites, a `possible_race()`-mirroring cross-thread pass, and
+a container-growth pass — verified to actually fire on real, deliberately
+provocative data (a real leak-shaped vector, two real racing threads), not
+just to compile without ever triggering. The fuller version — including
+full call chains — falls out for free once Layer 3/4 persistence (this
+document's own top remaining-work item) exists; not attempted
+speculatively ahead of that.
 
 ## How to use this document
-When picking up this vision again: check which layer is genuinely next
-given what exists (the same exercise that picked Layer 2 this cycle —
-look for what's already seeded, per ADR 0016 → ADR 0031's pattern), hold
-every new layer to this project's real, measure-don't-assume standard, and
-treat the Layer 6 caution above as a hard gate, not a suggestion. The
-real, concretely-scoped remaining work, in rough priority order: (1)
-persistence for Layers 3/4's in-process-only registries (one shared
-wire-format decision, not two), (2) composable multi-hook dispatch on
-`RecordHook` (unblocks Layer 4's single-hook limit and lets provenance/
-derivation/Tracy coexist on one field), (3) Layer 7's remaining named
-queries, (4) a real, evaluated first bridge for Layer 9 if one is worth
-building. None of these require reopening Layer 6.
+All 10 layers now have a real, honest disposition and, where something was
+actually built, an ADR to show for it. Picking this up again means
+extending what's here, not re-deriving a starting point — hold every
+extension to this project's real, measure-don't-assume standard, and treat
+the Layer 6 caution (the literal, unscoped version) as a permanent hard
+gate, not a suggestion that expires.
+
+The real, concretely-scoped remaining work, in rough priority order:
+1. **Persistence for Layers 3/4's in-process-only registries** — one
+   shared wire-format decision (format bump + a real storage-cost call for
+   variable-length per-event data), not two separate ones. This is the
+   single highest-leverage remaining item: it directly unblocks a fuller
+   Layer 10 narrative (real call chains, not just call sites) and gives
+   Layer 6's `program-snapshot` access to provenance it doesn't have today.
+2. **Composable multi-hook dispatch on `RecordHook`** — unblocks Layer 4's
+   single-hook limit and lets provenance/derivation/Tracy coexist on one
+   field instead of competing for the one slot.
+3. **Layer 7's remaining named queries** ("which object allocates the
+   most," "when did this invariant first fail") — each its own small,
+   scoped addition, not a general query engine.
+4. **A second Layer 9 bridge** (network or GPU) — only once there's a real
+   system available to verify it against honestly, the same bar the
+   filesystem bridge was held to.
