@@ -81,7 +81,13 @@ CHRONICLE_TEST(possible_race_is_false_for_cross_thread_events_far_apart_in_time)
 
     auto const rec_a = *last_writer(a);
     auto const rec_b = *last_writer(b);
-    CHRONICLE_CHECK(rec_a.thread_id != rec_b.thread_id);
+    // No thread_id check here (unlike the "sharing a physical tick" test
+    // above): t1 has already exited and been joined before t2 is even
+    // created, so the two threads' lifetimes never overlap, and a real OS
+    // is free to reuse the same thread id for t2 -- caught as a real,
+    // reproducible failure on Linux CI, not a flake. The actual thing this
+    // test verifies is the time-window logic below, not thread-id
+    // uniqueness (which only holds when both threads are alive at once).
     CHRONICLE_CHECK(!possible_race(rec_a, rec_b, /*window_us=*/1'000)); // 1ms window, 50ms apart
 }
 

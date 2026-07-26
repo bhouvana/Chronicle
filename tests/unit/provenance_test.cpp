@@ -14,8 +14,18 @@ namespace {
 
 #if defined(_MSC_VER)
 #define CHRONICLE_TEST_NOINLINE __declspec(noinline)
+#define CHRONICLE_TEST_DEFEAT_TAIL_CALL() ((void)0)
 #else
 #define CHRONICLE_TEST_NOINLINE __attribute__((noinline))
+// noinline only forbids *inlining* -- it does not forbid tail-call
+// elimination, a separate optimization. Without this, an aggressive
+// optimizer (real, reproducible on real GCC/Clang Linux CI at -O3; never
+// observed locally at -O2) can turn middle_write's trailing call to
+// inner_write() into a sibling jump instead of a real call, silently
+// removing middle_write's own frame from any stacktrace captured further
+// down the chain. The empty asm forces the compiler to treat the call as
+// not being in tail position.
+#define CHRONICLE_TEST_DEFEAT_TAIL_CALL() asm volatile("" ::: "memory")
 #endif
 
 CHRONICLE_TEST_NOINLINE void inner_write(tracked<int>& field, int value) {
@@ -23,6 +33,7 @@ CHRONICLE_TEST_NOINLINE void inner_write(tracked<int>& field, int value) {
 }
 CHRONICLE_TEST_NOINLINE void middle_write(tracked<int>& field, int value) {
     inner_write(field, value);
+    CHRONICLE_TEST_DEFEAT_TAIL_CALL();
 }
 
 } // namespace
