@@ -1,12 +1,14 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <source_location>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -56,27 +58,75 @@ public:
     Stream(Stream const&) = delete;
     Stream& operator=(Stream const&) = delete;
 
-    // Optional observer invoked synchronously from record(), once per event,
-    // with the just-recorded value and its call site -- the hook this
-    // stream's chronicle::tracy_bridge::PlotHandle (include/chronicle/
-    // tracy_bridge.hpp) attaches itself to for live plotting, without
-    // stream.hpp itself knowing anything about Tracy. A raw function
-    // pointer + context, not std::function: the common case (no hook
-    // attached, checked every record() call) must cost exactly one branch,
-    // not touch a possibly-heap-allocated callable. Only one hook at a time
-    // is supported deliberately -- this is a narrow, single-purpose
-    // extension point, not a general pub/sub system chronicle-core doesn't
-    // otherwise have a use for. Not synchronized against concurrent
-    // record() calls on other threads: attach (set_record_hook with a
-    // non-null hook) before, or detach (set_record_hook(nullptr, nullptr))
-    // strictly after, any concurrent producer activity on this stream --
-    // same lifetime discipline as constructing/destroying the Stream
-    // itself, not a new hazard this introduces.
+    // Optional observer(s) invoked synchronously from record(), once per
+    // event, with the just-recorded value and its call site -- the hook
+    // chronicle::tracy_bridge::PlotHandle (include/chronicle/tracy_bridge.hpp)
+    // and chronicle::derived::Derivation (include/chronicle/derived.hpp)
+    // both attach themselves to, without stream.hpp itself knowing
+    // anything about Tracy or derived-state recomputation. A raw function
+    // pointer + context per slot, not std::function: the common case (no
+    // hooks attached, checked every record() call) must cost a handful of
+    // null checks, not touch a possibly-heap-allocated callable.
+    //
+    // docs/adr/0040-composable-record-hooks.md supersedes ADR 0013's
+    // original "only one hook at a time is supported deliberately" --
+    // real evidence accumulated since (Tracy and derive() both needing
+    // the same stream's hook slot) is why this is now a small, *fixed*
+    // number of slots (kMaxRecordHooks = 4: two known real consumers plus
+    // real headroom, a documented, mechanically extensible limit, not a
+    // fundamental one -- same framing as ADR 0011's 8-field cap), not an
+    // unbounded/heap-allocating list, which would reintroduce the
+    // allocation cost this extension point was built specifically to
+    // avoid.
+    //
+    // Not synchronized against concurrent record() calls on other
+    // threads: attach (add_record_hook/set_record_hook) before, or detach
+    // (remove_record_hook/set_record_hook(nullptr, nullptr)) strictly
+    // after, any concurrent producer activity on this stream -- same
+    // lifetime discipline as constructing/destroying the Stream itself,
+    // restated here, not newly introduced by supporting more than one.
     using RecordHook = void (*)(void* context, T const& value, std::source_location const& call_site);
 
+    static constexpr std::size_t kMaxRecordHooks = 4;
+
+    // Installs into the first free slot; returns a handle for
+    // remove_record_hook(). Throws if all kMaxRecordHooks slots are full
+    // -- a cold, rare "something has gone architecturally wrong" path,
+    // not the hot record() path, so an exception is the right tool here
+    // (same convention chronicle/io/session_writer.hpp's cold I/O path
+    // already uses), not a return code record() itself would need to
+    // check.
+    [[nodiscard]] std::size_t add_record_hook(RecordHook hook, void* context) {
+        for (std::size_t i = 0; i < kMaxRecordHooks; ++i) {
+            if (hooks_[i].fn == nullptr) {
+                hooks_[i] = HookSlot{hook, context};
+                return i;
+            }
+        }
+        throw std::runtime_error(
+            "Stream<T>::add_record_hook: all " + std::to_string(kMaxRecordHooks) +
+            " hook slots are full -- see docs/adr/0040-composable-record-hooks.md");
+    }
+
+    void remove_record_hook(std::size_t handle) noexcept {
+        hooks_[handle] = HookSlot{};
+    }
+
+    // Kept, byte-for-byte the same signature as before this change --
+    // Stream<T> is reachable from #include <chronicle/chronicle.hpp>, so
+    // this is under ADR 0018's API stability commitment. Reimplemented as
+    // sugar over the slot mechanism: clears every slot, then installs
+    // `hook` into slot 0 if non-null. set_record_hook(nullptr, nullptr)
+    // still means "detach everything," exactly as it always has --
+    // existing callers built against the old single-hook API keep working
+    // completely unchanged.
     void set_record_hook(RecordHook hook, void* context) noexcept {
-        record_hook_ = hook;
-        record_hook_context_ = context;
+        for (auto& slot : hooks_) {
+            slot = HookSlot{};
+        }
+        if (hook != nullptr) {
+            hooks_[0] = HookSlot{hook, context};
+        }
     }
 
     // call_site defaults to the *direct* caller's location, which is only
@@ -103,8 +153,10 @@ public:
             hlc,
         };
 
-        if (record_hook_ != nullptr) {
-            record_hook_(record_hook_context_, event.value, event.call_site);
+        for (auto const& slot : hooks_) {
+            if (slot.fn != nullptr) {
+                slot.fn(slot.context, event.value, event.call_site);
+            }
         }
 
         auto& ring = ring_for_current_thread();
@@ -394,8 +446,11 @@ private:
     std::uint64_t id_;
     std::atomic<std::uint64_t> next_version_{0};
 
-    RecordHook record_hook_ = nullptr;
-    void* record_hook_context_ = nullptr;
+    struct HookSlot {
+        RecordHook fn = nullptr;
+        void* context = nullptr;
+    };
+    std::array<HookSlot, kMaxRecordHooks> hooks_{};
 
     mutable std::mutex ring_registry_mutex_;
     mutable std::vector<std::unique_ptr<RingBuffer<Event<T>>>> ring_registry_;
