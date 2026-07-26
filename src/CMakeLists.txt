@@ -28,6 +28,44 @@ target_compile_features(chronicle-core INTERFACE cxx_std_23)
 find_package(Threads REQUIRED)
 target_link_libraries(chronicle-core INTERFACE Threads::Threads)
 
+# provenance.hpp uses std::stacktrace (docs/adr/0032). On libstdc++, its
+# implementation lives in a separate static library whose name changed
+# across GCC versions -- stdc++_libbacktrace (GCC <= 13) vs. stdc++exp
+# (GCC 14+) -- and linking fails outright without it (real CI failure:
+# "undefined reference to std::stacktrace_entry::..."/"__glibcxx_backtrace_*",
+# caught only by reading the actual ubuntu-gcc/ubuntu-clang CI logs, not
+# from any local Windows build). Detected via a real compile+link check
+# rather than branching on compiler ID/version, since the two Ubuntu CI
+# jobs in this project turned out to pick up *different* libstdc++
+# versions (13 vs. 14) despite both running on "ubuntu-latest" --
+# libc++/MSVC STL need neither and fall through to the no-op case.
+include(CheckCXXSourceCompiles)
+include(CMakePushCheckState)
+
+set(CHRONICLE_STACKTRACE_TEST_SOURCE [[
+#include <stacktrace>
+int main() { auto s = std::stacktrace::current(); return static_cast<int>(s.size()); }
+]])
+
+cmake_push_check_state()
+set(CMAKE_REQUIRED_FLAGS "-std=c++23")
+check_cxx_source_compiles("${CHRONICLE_STACKTRACE_TEST_SOURCE}" CHRONICLE_STACKTRACE_LINKS_UNAIDED)
+if(NOT CHRONICLE_STACKTRACE_LINKS_UNAIDED)
+    set(CMAKE_REQUIRED_LIBRARIES stdc++exp)
+    check_cxx_source_compiles("${CHRONICLE_STACKTRACE_TEST_SOURCE}" CHRONICLE_STACKTRACE_NEEDS_STDCXX_EXP)
+    if(NOT CHRONICLE_STACKTRACE_NEEDS_STDCXX_EXP)
+        set(CMAKE_REQUIRED_LIBRARIES stdc++_libbacktrace)
+        check_cxx_source_compiles("${CHRONICLE_STACKTRACE_TEST_SOURCE}" CHRONICLE_STACKTRACE_NEEDS_STDCXX_LIBBACKTRACE)
+    endif()
+endif()
+cmake_pop_check_state()
+
+if(CHRONICLE_STACKTRACE_NEEDS_STDCXX_EXP)
+    target_link_libraries(chronicle-core INTERFACE stdc++exp)
+elseif(CHRONICLE_STACKTRACE_NEEDS_STDCXX_LIBBACKTRACE)
+    target_link_libraries(chronicle-core INTERFACE stdc++_libbacktrace)
+endif()
+
 if(CHRONICLE_IS_TOP_LEVEL)
     include(GNUInstallDirs)
 
