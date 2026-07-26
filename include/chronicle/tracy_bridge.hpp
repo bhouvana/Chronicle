@@ -18,11 +18,15 @@
 //
 // This is a genuinely separate, optional header: chronicle-core (stream.hpp
 // et al.) has zero knowledge of Tracy and stays that way for every consumer
-// who doesn't include this file. The only core-library change this feature
-// needed was Stream<T>::set_record_hook() -- a single function-pointer
-// extension point, costing one null check per record() call when unused
-// (measured, not assumed -- see bench/RESULTS.md), which this header is the
-// sole real user of.
+// who doesn't include this file. The core-library change this feature
+// needed was Stream<T>::add_record_hook()/remove_record_hook() -- a small,
+// fixed-size (kMaxRecordHooks) function-pointer extension point, real cost
+// measured (not assumed) at every record() call regardless of use --
+// see bench/RESULTS.md and docs/adr/0040-composable-record-hooks.md, which
+// generalized this from set_record_hook()'s original single-slot design
+// (ADR 0013's own choice) specifically so a Tracy-plotted field can also
+// simultaneously feed a chronicle::derived::Derivation or any other
+// consumer, instead of the two competing for one slot.
 //
 // Scope: plot data points for arithmetic T only, matching Tracy's actual
 // PlotData() overload set (int64_t, float, double -- see
@@ -49,15 +53,20 @@ public:
                    "chronicle::tracy_bridge::plot() requires an arithmetic field type -- "
                    "Tracy's PlotData() only accepts int64_t/float/double, see docs/adr/0013");
 
+    // docs/adr/0040-composable-record-hooks.md: add_record_hook()/
+    // remove_record_hook() instead of set_record_hook() -- lets a
+    // Tracy-plotted field simultaneously feed a chronicle::derived::Derivation
+    // (or anything else), which the old single-slot set_record_hook()
+    // could not.
     PlotHandle(Stream<T>& stream, std::string name) : stream_(&stream), name_(std::move(name)) {
         TracyPlotConfig(name_.c_str(), tracy::PlotFormatType::Number, /*step=*/false, /*fill=*/true,
                          /*color=*/0);
-        stream_->set_record_hook(&PlotHandle::on_record, this);
+        hook_handle_ = stream_->add_record_hook(&PlotHandle::on_record, this);
     }
 
     ~PlotHandle() {
         if (stream_ != nullptr) {
-            stream_->set_record_hook(nullptr, nullptr);
+            stream_->remove_record_hook(hook_handle_);
         }
     }
 
@@ -65,13 +74,16 @@ public:
     PlotHandle& operator=(PlotHandle const&) = delete;
 
     // Movable: the moved-from handle's destructor must not then detach the
-    // hook the moved-to handle now owns.
+    // hook the moved-to handle now owns -- removes `other`'s registration
+    // (which still points at `other`'s soon-to-be-stale `this`) and
+    // installs a fresh one under the moved-to object's real address.
     PlotHandle(PlotHandle&& other) noexcept
         : stream_(other.stream_), name_(std::move(other.name_)) {
-        other.stream_ = nullptr;
         if (stream_ != nullptr) {
-            stream_->set_record_hook(&PlotHandle::on_record, this);
+            stream_->remove_record_hook(other.hook_handle_);
+            hook_handle_ = stream_->add_record_hook(&PlotHandle::on_record, this);
         }
+        other.stream_ = nullptr;
     }
     PlotHandle& operator=(PlotHandle&&) = delete;
 
@@ -96,6 +108,7 @@ private:
 
     Stream<T>* stream_;
     std::string name_;
+    std::size_t hook_handle_ = 0;
 };
 
 // chronicle::tracy_bridge::plot(stream, "player_1.hp") -- attaches live
