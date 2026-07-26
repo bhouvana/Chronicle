@@ -240,6 +240,15 @@ variant (no ring buffer growth, compile-time-sized streams) serve higher-end
 automotive/industrial embedded use cases without compromising the core model's
 generality for the primary game/sim/finance audience?
 
+**Shipped — see [ADR 0027](adr/0027-embedded-tier.md).**
+`chronicle::embedded::TrackedScalar<T, Capacity>`: a genuinely separate,
+opt-in module (not reachable from the umbrella header), fixed-capacity
+circular history over `std::array`, no heap allocation, no thread safety
+(single-core/cooperative-scheduling audience, matching the
+allocation-free budget this topic asks for). The zero-heap-allocation
+claim is verified directly, not assumed — which surfaced a real, reusable
+gotcha in this project's own test framework along the way (see the ADR).
+
 ## 8. Machine-assisted anomaly detection over history
 Once `StateStream`s exist as a queryable, structured corpus, there's a natural
 follow-on: flag "this field's value is outside its historically observed range/rate
