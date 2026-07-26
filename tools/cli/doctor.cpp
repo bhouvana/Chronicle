@@ -1,5 +1,6 @@
 #include "doctor.hpp"
 
+#include "json_util.hpp"
 #include "query.hpp"
 
 #include <algorithm>
@@ -123,6 +124,74 @@ bool write_doctor_report(LoadedSession const& session, std::ostream& out) {
 
     bool const healthy = races.empty() && growth.empty() && !any_empty;
     out << (healthy ? "OK: no issues found.\n" : "ISSUES FOUND -- see above.\n");
+    return !healthy;
+}
+
+bool write_doctor_report_json(LoadedSession const& session, std::ostream& out) {
+    auto const groups = group_by_object(session);
+    auto const activity = most_changed_streams(session);
+    auto const threads = thread_index(session);
+    auto const merged = merge_entire_session(session);
+    auto const races = detect_races(merged);
+
+    std::vector<LoadedStream const*> all_fields;
+    all_fields.reserve(session.streams.size());
+    for (auto const& stream : session.streams) {
+        all_fields.push_back(&stream);
+    }
+    auto const growth = detect_growth_anomalies(all_fields);
+
+    std::vector<std::string> empty_streams;
+    for (auto const& stream : session.streams) {
+        if (stream.events.empty()) {
+            empty_streams.push_back(stream.name);
+        }
+    }
+
+    bool const healthy = races.empty() && growth.empty() && empty_streams.empty();
+
+    out << "{";
+    out << "\"stream_count\":" << session.streams.size() << ",";
+    out << "\"object_count\":" << groups.size() << ",";
+    out << "\"thread_count\":" << threads.size() << ",";
+    out << "\"persisted_call_chains\":" << session.provenance.size() << ",";
+    out << "\"persisted_derivations\":" << session.derivations.size() << ",";
+
+    out << "\"hot_fields\":[";
+    for (std::size_t i = 0; i < std::min<std::size_t>(5, activity.size()); ++i) {
+        if (i != 0) out << ",";
+        out << "{\"name\":\"" << json_escape(activity[i].name) << "\",\"event_count\":"
+            << activity[i].event_count << "}";
+    }
+    out << "],";
+
+    out << "\"possible_races\":[";
+    for (std::size_t i = 0; i < races.size(); ++i) {
+        if (i != 0) out << ",";
+        out << "{\"field_a\":\"" << json_escape(races[i].field_a) << "\",\"position_a\":" << races[i].position_a
+            << ",\"field_b\":\"" << json_escape(races[i].field_b) << "\",\"position_b\":" << races[i].position_b
+            << "}";
+    }
+    out << "],";
+
+    out << "\"possible_leaks\":[";
+    for (std::size_t i = 0; i < growth.size(); ++i) {
+        if (i != 0) out << ",";
+        out << "{\"field_name\":\"" << json_escape(growth[i].field_name) << "\",\"final_size\":"
+            << growth[i].final_size << "}";
+    }
+    out << "],";
+
+    out << "\"empty_streams\":[";
+    for (std::size_t i = 0; i < empty_streams.size(); ++i) {
+        if (i != 0) out << ",";
+        out << "\"" << json_escape(empty_streams[i]) << "\"";
+    }
+    out << "],";
+
+    out << "\"healthy\":" << (healthy ? "true" : "false");
+    out << "}\n";
+
     return !healthy;
 }
 

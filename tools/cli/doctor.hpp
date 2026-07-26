@@ -57,4 +57,10 @@ struct GrowthFinding {
 // not just an interactive report.
 bool write_doctor_report(chronicle::io::LoadedSession const& session, std::ostream& out);
 
+// docs/adr/0042-json-output-modes.md: the same checks, same health
+// verdict, structured for a tool/LLM to consume instead of a human
+// reading formatted text -- not a second analysis, a second renderer over
+// the same data write_doctor_report() already computes.
+bool write_doctor_report_json(chronicle::io::LoadedSession const& session, std::ostream& out);
+
 } // namespace chronicle_cli

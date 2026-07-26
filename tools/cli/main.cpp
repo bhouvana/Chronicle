@@ -11,6 +11,7 @@
 #include "diff_runs.hpp"
 #include "doctor.hpp"
 #include "html_export.hpp"
+#include "json_util.hpp"
 #include "merge.hpp"
 #include "narrate.hpp"
 #include "object_graph.hpp"
@@ -251,9 +252,33 @@ int cmd_merge(std::string const& output_path, std::vector<std::string> const& ta
 // docs/adr/0031-object-graph.md ("Layer 2"): a CLI-visible version of what
 // ADR 0016's browser viewer already shows in its Objects panel, grouped by
 // chronicle::object_name_of() (tools/cli/object_graph.cpp).
-int cmd_objects(std::string const& path) {
+int cmd_objects(std::string const& path, bool json) {
     auto const session = load_file(path);
     auto const groups = chronicle_cli::group_by_object(session);
+
+    if (json) {
+        std::cout << "[";
+        for (std::size_t g = 0; g < groups.size(); ++g) {
+            auto const& group = groups[g];
+            if (g != 0) std::cout << ",";
+            std::size_t total_events = 0;
+            for (auto const* field : group.fields) {
+                total_events += field->events.size();
+            }
+            std::cout << "{\"name\":\"" << chronicle_cli::json_escape(group.name) << "\",\"total_events\":"
+                       << total_events << ",\"fields\":[";
+            for (std::size_t f = 0; f < group.fields.size(); ++f) {
+                auto const* field = group.fields[f];
+                if (f != 0) std::cout << ",";
+                std::cout << "{\"name\":\"" << chronicle_cli::json_escape(field->name) << "\",\"shape\":\""
+                           << shape_name(field->shape) << "\",\"event_count\":" << field->events.size() << "}";
+            }
+            std::cout << "]}";
+        }
+        std::cout << "]\n";
+        return 0;
+    }
+
     for (auto const& group : groups) {
         std::size_t total_events = 0;
         for (auto const* field : group.fields) {
@@ -390,9 +415,10 @@ int cmd_program_snapshot(std::string const& path, std::size_t position) {
 // thread_index, merge_entire_session) plus two new whole-file detection
 // passes (tools/cli/doctor.cpp). Exit code reflects health, so this is
 // usable as a CI gate, not just an interactive report.
-int cmd_doctor(std::string const& path) {
+int cmd_doctor(std::string const& path, bool json) {
     auto const session = load_file(path);
-    bool const issues_found = chronicle_cli::write_doctor_report(session, std::cout);
+    bool const issues_found = json ? chronicle_cli::write_doctor_report_json(session, std::cout)
+                                    : chronicle_cli::write_doctor_report(session, std::cout);
     return issues_found ? 1 : 0;
 }
 
@@ -401,9 +427,13 @@ int cmd_doctor(std::string const& path) {
 // possible_race()-mirroring pass, a container-growth pass) into one
 // human-readable report -- an emergent capability, not a new recording
 // mechanism.
-int cmd_narrate(std::string const& path, std::string const& object_name, std::size_t position) {
+int cmd_narrate(std::string const& path, std::string const& object_name, std::size_t position, bool json) {
     auto const session = load_file(path);
-    chronicle_cli::write_narration(session, object_name, position, std::cout);
+    if (json) {
+        chronicle_cli::write_narration_json(session, object_name, position, std::cout);
+    } else {
+        chronicle_cli::write_narration(session, object_name, position, std::cout);
+    }
     return 0;
 }
 
@@ -462,7 +492,6 @@ void print_usage() {
                  "  chronicle-cli diff <file> <stream-name> <version-a> <version-b>\n"
                  "  chronicle-cli diff-runs <file-a> <file-b>\n"
                  "  chronicle-cli merge <output.chronicle> <tag1>:<file1> [<tag2>:<file2> ...]\n"
-                 "  chronicle-cli objects <file>\n"
                  "  chronicle-cli object-history <file> <object-name>\n"
                  "  chronicle-cli object-snapshot <file> <object-name> <position>\n"
                  "  chronicle-cli query most-changed <file>\n"
@@ -470,8 +499,9 @@ void print_usage() {
                  "  chronicle-cli query thread <file> <thread-index>\n"
                  "  chronicle-cli program-history <file>\n"
                  "  chronicle-cli program-snapshot <file> <position>\n"
-                 "  chronicle-cli narrate <file> <object-name> <position>\n"
-                 "  chronicle-cli doctor <file>\n"
+                 "  chronicle-cli narrate <file> <object-name> <position> [--json]\n"
+                 "  chronicle-cli doctor <file> [--json]\n"
+                 "  chronicle-cli objects <file> [--json]\n"
                  "  chronicle-cli export --html <file> <output.html>\n"
                  "  chronicle-cli export --perfetto <file> <output.json>\n"
 #ifdef CHRONICLE_CLI_HAVE_HTTPLIB
@@ -483,7 +513,15 @@ void print_usage() {
 } // namespace
 
 int main(int argc, char** argv) {
-    std::vector<std::string> const args(argv + 1, argv + argc);
+    std::vector<std::string> args(argv + 1, argv + argc);
+    // docs/adr/0042-json-output-modes.md: a trailing --json flag switches
+    // objects/doctor/narrate to structured output -- stripped here so
+    // every dispatch check below keeps its existing exact-arg-count
+    // shape, not duplicated per subcommand.
+    bool const json = !args.empty() && args.back() == "--json";
+    if (json) {
+        args.pop_back();
+    }
     try {
         if (args.empty()) {
             print_usage();
@@ -505,7 +543,7 @@ int main(int argc, char** argv) {
             return cmd_merge(args[1], std::vector<std::string>(args.begin() + 2, args.end()));
         }
         if (args[0] == "objects" && args.size() == 2) {
-            return cmd_objects(args[1]);
+            return cmd_objects(args[1], json);
         }
         if (args[0] == "object-history" && args.size() == 3) {
             return cmd_object_history(args[1], args[2]);
@@ -529,10 +567,10 @@ int main(int argc, char** argv) {
             return cmd_program_snapshot(args[1], static_cast<std::size_t>(std::stoull(args[2])));
         }
         if (args[0] == "narrate" && args.size() == 4) {
-            return cmd_narrate(args[1], args[2], static_cast<std::size_t>(std::stoull(args[3])));
+            return cmd_narrate(args[1], args[2], static_cast<std::size_t>(std::stoull(args[3])), json);
         }
         if (args[0] == "doctor" && args.size() == 2) {
-            return cmd_doctor(args[1]);
+            return cmd_doctor(args[1], json);
         }
         if (args[0] == "export" && args.size() == 4 && args[1] == "--html") {
             return cmd_export_html(args[2], args[3]);

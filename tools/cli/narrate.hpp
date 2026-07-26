@@ -25,4 +25,11 @@ namespace chronicle_cli {
 void write_narration(chronicle::io::LoadedSession const& session, std::string const& object_name,
                       std::size_t position, std::ostream& out);
 
+// docs/adr/0042-json-output-modes.md: the same composed narrative,
+// structured for a tool/LLM instead of a human reading formatted text --
+// the direct, concrete answer to "how does an AI consume this" that costs
+// a fraction of a full query language.
+void write_narration_json(chronicle::io::LoadedSession const& session, std::string const& object_name,
+                           std::size_t position, std::ostream& out);
+
 } // namespace chronicle_cli

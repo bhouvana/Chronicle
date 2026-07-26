@@ -1,5 +1,6 @@
 #include "narrate.hpp"
 
+#include "json_util.hpp"
 #include "object_graph.hpp"
 
 #include <algorithm>
@@ -173,6 +174,141 @@ void write_narration(LoadedSession const& session, std::string const& object_nam
             }
         }
     }
+}
+
+void write_narration_json(LoadedSession const& session, std::string const& object_name, std::size_t position,
+                           std::ostream& out) {
+    auto const groups = group_by_object(session);
+    auto const it = std::find_if(groups.begin(), groups.end(),
+                                  [&](ObjectGroup const& g) { return g.name == object_name; });
+    if (it == groups.end() || it->fields.empty()) {
+        out << "{\"error\":\"no such object (or it has no recorded fields): " << json_escape(object_name)
+            << "\"}\n";
+        return;
+    }
+    auto const merged = merge_object_history(*it);
+    if (merged.entries.empty()) {
+        out << "{\"error\":\"object has no recorded events: " << json_escape(object_name) << "\"}\n";
+        return;
+    }
+    std::size_t const cutoff = std::min(position, merged.entries.size() - 1);
+
+    out << "{\"object\":\"" << json_escape(object_name) << "\",\"position\":" << cutoff << ",\"of\":"
+        << (merged.entries.size() - 1) << ",\"fields\":[";
+
+    auto const snapshots = snapshot_fields(it->fields, merged, cutoff);
+    for (std::size_t idx = 0; idx < snapshots.size(); ++idx) {
+        auto const& snap = snapshots[idx];
+        if (idx != 0) out << ",";
+        out << "{\"name\":\"" << json_escape(snap.field_name) << "\",\"value\":"
+            << (snap.recorded ? "\"" + json_escape(snap.rendered) + "\"" : "null") << ",\"recorded\":"
+            << (snap.recorded ? "true" : "false");
+
+        LoadedEvent const* last_event = nullptr;
+        for (std::size_t i = 0; i <= cutoff; ++i) {
+            if (merged.entries[i].field_name == snap.field_name) {
+                last_event = merged.entries[i].event;
+            }
+        }
+        if (last_event == nullptr) {
+            out << "}";
+            continue;
+        }
+
+        if (auto const* changes = session.derivation_for(snap.field_name, last_event->version)) {
+            out << ",\"derived_because\":[";
+            for (std::size_t i = 0; i < changes->size(); ++i) {
+                if (i != 0) out << ",";
+                auto const& change = (*changes)[i];
+                out << "{\"name\":\"" << json_escape(change.name) << "\",\"old_value\":\""
+                    << json_escape(change.old_value) << "\",\"new_value\":\"" << json_escape(change.new_value)
+                    << "\",\"changed\":" << (change.changed ? "true" : "false") << "}";
+            }
+            out << "]";
+        } else if (auto const* frames = session.provenance_for(snap.field_name, last_event->version)) {
+            out << ",\"call_chain\":[";
+            for (std::size_t i = 0; i < frames->size(); ++i) {
+                if (i != 0) out << ",";
+                auto const& frame = (*frames)[i];
+                out << "{\"description\":\"" << json_escape(frame.description) << "\",\"source_file\":\""
+                    << json_escape(frame.source_file) << "\",\"source_line\":" << frame.source_line << "}";
+            }
+            out << "]";
+        } else {
+            bool const known = last_event->call_site.known();
+            out << ",\"last_write\":{\"known\":" << (known ? "true" : "false");
+            if (known) {
+                out << ",\"file\":\"" << json_escape(last_event->call_site.file)
+                    << "\",\"line\":" << last_event->call_site.line;
+            }
+            out << "}";
+        }
+        out << "}";
+    }
+    out << "],";
+
+    // Structural anomaly pass -- same fold as write_narration()'s human-readable version.
+    std::map<std::string, std::uint64_t> max_version_at_cutoff;
+    for (std::size_t i = 0; i <= cutoff; ++i) {
+        auto& mv = max_version_at_cutoff[merged.entries[i].field_name];
+        mv = std::max(mv, merged.entries[i].event->version);
+    }
+    out << "\"structural_notes\":[";
+    bool first_note = true;
+    for (auto const* field : it->fields) {
+        if (field->shape == StreamShape::Scalar) {
+            continue;
+        }
+        auto found = max_version_at_cutoff.find(field->name);
+        if (found == max_version_at_cutoff.end()) {
+            continue;
+        }
+        bool ever_shrunk = false;
+        std::size_t size = 0;
+        for (auto const& event : field->events) {
+            if (event.version > found->second) {
+                break;
+            }
+            switch (event.op_kind) {
+                case ContainerOpKind::Insert: ++size; break;
+                case ContainerOpKind::Erase:
+                    if (size > 0) --size;
+                    ever_shrunk = true;
+                    break;
+                case ContainerOpKind::Update: break;
+                case ContainerOpKind::Clear:
+                    if (size > 0) ever_shrunk = true;
+                    size = 0;
+                    break;
+            }
+        }
+        if (!ever_shrunk && size >= 5) {
+            if (!first_note) out << ",";
+            first_note = false;
+            out << "{\"field\":\"" << json_escape(field->name) << "\",\"size\":" << size << "}";
+        }
+    }
+    out << "],";
+
+    constexpr std::uint64_t kRaceWindowUs = 1000;
+    std::size_t const window_start = cutoff >= 5 ? cutoff - 5 : 0;
+    out << "\"possible_races\":[";
+    bool first_race = true;
+    for (std::size_t i = window_start; i <= cutoff; ++i) {
+        for (std::size_t j = i + 1; j <= cutoff; ++j) {
+            if (merged.entries[i].field_name == merged.entries[j].field_name) {
+                continue;
+            }
+            if (possibly_racing(*merged.entries[i].event, *merged.entries[j].event, kRaceWindowUs)) {
+                if (!first_race) out << ",";
+                first_race = false;
+                out << "{\"field_a\":\"" << json_escape(merged.entries[i].field_name) << "\",\"position_a\":"
+                    << i << ",\"field_b\":\"" << json_escape(merged.entries[j].field_name)
+                    << "\",\"position_b\":" << j << "}";
+            }
+        }
+    }
+    out << "]}\n";
 }
 
 } // namespace chronicle_cli
