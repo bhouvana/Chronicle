@@ -213,6 +213,16 @@ existing generation-counted handle identity (Phase 4), which is inherently
 single-run scoped. Open question: is this a Query API extension or a fundamentally
 different tool built on exported session data.
 
+**Shipped — see [ADR 0025](adr/0025-cross-run-diffing.md).** Answered the open
+question: a different tool, not a Query API extension —
+`chronicle-cli diff-runs <file-a> <file-b>` aligns streams by name (the
+semantic key this topic called for), diffs scalar streams by ordinal
+position within each run's history, and container streams by final
+replayed state only (full op-by-op alignment would report spurious
+differences for equivalent-but-differently-ordered op sequences). Verified
+against two real, separately-produced `.chronicle` files with a seeded
+divergence.
+
 ## 6. Distributed / multi-process state history
 Everything in this document set (Phase 5 onward) assumes a single process. Extending
 `StateStream` semantics across a process boundary (e.g. a client-server game, a

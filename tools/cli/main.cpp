@@ -8,8 +8,10 @@
 // of the producer's original C++ types, only WireValues (see
 // chronicle/io/loaded_session.hpp).
 
+#include "diff_runs.hpp"
 #include "html_export.hpp"
 #include "perfetto_export.hpp"
+#include "replay.hpp"
 #include "serve.hpp"
 #include "session_loader.hpp"
 
@@ -102,79 +104,8 @@ int cmd_history(std::string const& path, std::string const& stream_name) {
     return 0;
 }
 
-// Generic replay for IndexedOp/KeyedOp shapes, folding LoadedEvents up to a
-// target version -- possible only because the wire vocabulary is small and
-// closed (wire.hpp); this cannot know what the *original* element type was,
-// only that (say) it was an Int64.
-std::vector<WireValue> replay_indexed(LoadedStream const& stream, std::uint64_t up_to_version) {
-    std::vector<WireValue> result;
-    for (auto const& event : stream.events) {
-        if (event.version > up_to_version) {
-            break;
-        }
-        auto const index = static_cast<std::size_t>(event.key_or_index.u);
-        switch (event.op_kind) {
-            case ContainerOpKind::Insert:
-                if (index >= result.size()) {
-                    result.push_back(event.value);
-                } else {
-                    result.insert(result.begin() + static_cast<std::ptrdiff_t>(index), event.value);
-                }
-                break;
-            case ContainerOpKind::Update:
-                if (index < result.size()) {
-                    result[index] = event.value;
-                }
-                break;
-            case ContainerOpKind::Erase:
-                if (index < result.size()) {
-                    result.erase(result.begin() + static_cast<std::ptrdiff_t>(index));
-                }
-                break;
-            case ContainerOpKind::Clear:
-                result.clear();
-                break;
-        }
-    }
-    return result;
-}
-
-std::vector<std::pair<WireValue, WireValue>> replay_keyed(LoadedStream const& stream,
-                                                            std::uint64_t up_to_version) {
-    std::vector<std::pair<WireValue, WireValue>> result;
-    auto find_key = [&](WireValue const& key) {
-        return std::find_if(result.begin(), result.end(),
-                             [&](auto const& kv) { return kv.first == key; });
-    };
-    for (auto const& event : stream.events) {
-        if (event.version > up_to_version) {
-            break;
-        }
-        switch (event.op_kind) {
-            case ContainerOpKind::Insert:
-            case ContainerOpKind::Update: {
-                auto it = find_key(event.key_or_index);
-                if (it != result.end()) {
-                    it->second = event.value;
-                } else {
-                    result.emplace_back(event.key_or_index, event.value);
-                }
-                break;
-            }
-            case ContainerOpKind::Erase: {
-                auto it = find_key(event.key_or_index);
-                if (it != result.end()) {
-                    result.erase(it);
-                }
-                break;
-            }
-            case ContainerOpKind::Clear:
-                result.clear();
-                break;
-        }
-    }
-    return result;
-}
+using chronicle_cli::replay_indexed;
+using chronicle_cli::replay_keyed;
 
 int cmd_diff(std::string const& path, std::string const& stream_name, std::uint64_t v0, std::uint64_t v1) {
     auto const session = load_file(path);
@@ -269,11 +200,23 @@ int cmd_export_perfetto(std::string const& path, std::string const& output_path)
     return 0;
 }
 
+// docs/12-future-research-topics.md topic 5: two independently-produced
+// session files, aligned by stream name (see diff_runs.cpp for why name,
+// not object identity/version). "Same scenario" is the caller's claim, not
+// something this tool verifies -- it diffs whatever two files it's given.
+int cmd_diff_runs(std::string const& path_a, std::string const& path_b) {
+    auto const run_a = load_file(path_a);
+    auto const run_b = load_file(path_b);
+    bool const differs = chronicle_cli::write_run_diff(run_a, run_b, std::cout);
+    return differs ? 1 : 0;
+}
+
 void print_usage() {
     std::cout << "usage:\n"
                  "  chronicle-cli list <file>\n"
                  "  chronicle-cli history <file> <stream-name>\n"
                  "  chronicle-cli diff <file> <stream-name> <version-a> <version-b>\n"
+                 "  chronicle-cli diff-runs <file-a> <file-b>\n"
                  "  chronicle-cli export --html <file> <output.html>\n"
                  "  chronicle-cli export --perfetto <file> <output.json>\n"
 #ifdef CHRONICLE_CLI_HAVE_HTTPLIB
@@ -299,6 +242,9 @@ int main(int argc, char** argv) {
         }
         if (args[0] == "diff" && args.size() == 5) {
             return cmd_diff(args[1], args[2], std::stoull(args[3]), std::stoull(args[4]));
+        }
+        if (args[0] == "diff-runs" && args.size() == 3) {
+            return cmd_diff_runs(args[1], args[2]);
         }
         if (args[0] == "export" && args.size() == 4 && args[1] == "--html") {
             return cmd_export_html(args[2], args[3]);
