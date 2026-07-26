@@ -19,16 +19,19 @@ and as part of what" answerable once, well, and reused everywhere.
 
 **Status as of this cycle**: all 10 layers now have a real disposition
 and, where built, an ADR. Layers 1-5, 6 (scoped), 7 (partial), 9 (one
-bridge), and 10 are done. Layer 8 is extended. Nothing here reopens or
-reverses a decision this project's ADRs already made — Layer 6 was
-completed in its explicitly-scoped form ("rewind everything Chronicle
-instruments," not literal memory-level determinism), Layer 9 shipped
-exactly one bridge that could be verified for real in this environment
-rather than fabricating the others, and Layer 10 composes only data
-that's actually persisted to disk. Every new layer either extended an
-existing extension point (`RecordHook`, the `(stream_id, version)`
-registry pattern, `merge_object_history()`) or added a small, additive,
-real capability with its own measured cost where one existed to measure.
+bridge), and 10 are done. Layer 8 is extended. Layers 3 and 4's
+in-process-only registries now persist through a shared format v5
+extension (ADR 0039), which also gave Layer 10's narrative its full
+payoff (real call chains and derivation explanations, not just call
+sites). Nothing here reopens or reverses a decision this project's ADRs
+already made — Layer 6 was completed in its explicitly-scoped form
+("rewind everything Chronicle instruments," not literal memory-level
+determinism), Layer 9 shipped exactly one bridge that could be verified
+for real in this environment rather than fabricating the others. Every
+new layer either extended an existing extension point (`RecordHook`, the
+`(stream_id, version)` registry pattern, `merge_object_history()`) or
+added a small, additive, real capability with its own measured cost where
+one existed to measure.
 
 ## Layer 1 — State Recording — **done** (v0.1 onward)
 `tracked<T>`/`tracked_vector<T>`/`tracked_map<K,V>`, `history()`/
@@ -51,7 +54,7 @@ follow-ons, open direction, not committed:
   distinguish "retired" from "just idle" without one, and inferring it
   from silence would be a fabricated claim.
 
-## Layer 3 — Provenance — **done** (this cycle) — [ADR 0032](adr/0032-provenance-stacktrace.md)
+## Layer 3 — Provenance — **done, now persisted** (this cycle) — [ADR 0032](adr/0032-provenance-stacktrace.md)/[0039](adr/0039-persist-provenance-and-derivation.md)
 `chronicle::set_with_stacktrace()`/`provenance_of()`, built on C++23
 `std::stacktrace`, verified on both compilers this project's CI matrix has
 (MSVC 19.44, Clang 21.1.6). The real, measured cost turned out far larger
@@ -59,13 +62,12 @@ than the "needs measuring" note originally here anticipated — **116,787.63
 ns/op**, ~1,300-1,850x a plain tracked write, three orders of magnitude
 past even `causal_clock`'s cost. That evidence directly shaped the design:
 a separate, differently-named, explicit per-call opt-in, never a
-`Session::Config` flag, never on `record()`'s hot path. In-process only —
-**not yet persisted to the `.chronicle` wire format**; that's the real,
-concretely-scoped next follow-on for this layer (a new format bump, plus a
-real decision about storing variable-length per-event trace data, and only
-then a `chronicle-cli` surface for it).
+`Session::Config` flag, never on `record()`'s hot path. Originally
+in-process only; **now persists through format v5** (`SessionWriter::write_provenance()`),
+so a full call chain survives a save/load round trip and shows up in
+`chronicle-cli narrate` — the follow-on this entry named is done.
 
-## Layer 4 — Derived State — **done** (this cycle) — [ADR 0033](adr/0033-derived-state.md)
+## Layer 4 — Derived State — **done, now persisted** (this cycle) — [ADR 0033](adr/0033-derived-state.md)/[0039](adr/0039-persist-provenance-and-derivation.md)
 `gold = income - tax`, auto-explained. The fork this entry originally
 named is resolved: **(a)**, the explicit reactive API — `chronicle::derive()`/
 `explain()`, built entirely on the existing `Stream<T>::RecordHook`
@@ -75,11 +77,12 @@ the scale of `tools/codegen`'s Clang tool and was deferred as genuinely
 different, larger scope. Real, stated limits: `RecordHook` is single-slot
 per stream (can't compose with e.g. a Tracy hook on the same dependency),
 no derived-of-derived (no dependency-graph ordering/cycle detection
-attempted), in-process only. The natural follow-ons, open direction, not
-committed: composable multi-hook dispatch (would unblock both limits at
-once), and persistence — shared with Layer 3's provenance follow-on, since
-both are in-process-only for the same underlying reason (no wire-format
-support for arbitrary per-event side-channel data yet).
+attempted). Originally in-process only; **now persists through format v5**
+(`SessionWriter::write_derived()`), so a `derive()` target's real
+dependency-change explanation survives a save/load round trip. The one
+remaining open follow-on: composable multi-hook dispatch on `RecordHook`
+(unblocks the single-slot limit, letting provenance/derivation/Tracy
+coexist on one field).
 
 ## Layer 5 — Object Time Machine — **done** (this cycle) — [ADR 0034](adr/0034-object-snapshot.md)
 `history(player)` instead of one field at a time is `object-history`
@@ -154,20 +157,21 @@ Each new domain stays its own scoped bridge decision, not a single
 "add everything" effort — this entry is proof of that discipline, not a
 reason to relax it for the remaining three.
 
-## Layer 10 — Engineering Memory — **done, from persisted data only** (this cycle) — [ADR 0038](adr/0038-narrative-composer.md)
+## Layer 10 — Engineering Memory — **done, now with full provenance** (this cycle) — [ADR 0038](adr/0038-narrative-composer.md)/[0039](adr/0039-persist-provenance-and-derivation.md)
 The "Renderer stalled because Physics waited..." narrative is what Layers
-2 + 3 + 9 composed together would ideally produce — but Layers 3/4's
-registries are in-process only (ADR 0032/0033), so a `.chronicle`-file-based
-narrator genuinely cannot include full call chains or derivation
-explanations, no matter how it's composed. `chronicle-cli narrate`
-composes exactly what *is* persisted: object-snapshot values, real
-per-event call sites, a `possible_race()`-mirroring cross-thread pass, and
-a container-growth pass — verified to actually fire on real, deliberately
-provocative data (a real leak-shaped vector, two real racing threads), not
-just to compile without ever triggering. The fuller version — including
-full call chains — falls out for free once Layer 3/4 persistence (this
-document's own top remaining-work item) exists; not attempted
-speculatively ahead of that.
+2 + 3 + 9 composed together produce. `chronicle-cli narrate` composes
+object-snapshot values, a `possible_race()`-mirroring cross-thread pass,
+and a container-growth pass — verified to actually fire on real,
+deliberately provocative data (a real leak-shaped vector, two real racing
+threads), not just to compile without ever triggering. Originally limited
+to a single persisted call site per field, since Layers 3/4's registries
+were in-process only; **now shows the full call chain or derivation
+explanation** when a field opted into `set_with_stacktrace()`/`derive()`,
+via format v5 persistence (ADR 0039) — verified against a real file: a
+field with a captured stacktrace shows its actual 5-frame chain with
+resolved `file:line`, a `derive()` target correctly attributes its change
+to the dependency that actually moved. This was the last named gap in this
+layer; nothing further is queued against it.
 
 ## How to use this document
 All 10 layers now have a real, honest disposition and, where something was
@@ -178,18 +182,17 @@ the Layer 6 caution (the literal, unscoped version) as a permanent hard
 gate, not a suggestion that expires.
 
 The real, concretely-scoped remaining work, in rough priority order:
-1. **Persistence for Layers 3/4's in-process-only registries** — one
-   shared wire-format decision (format bump + a real storage-cost call for
-   variable-length per-event data), not two separate ones. This is the
-   single highest-leverage remaining item: it directly unblocks a fuller
-   Layer 10 narrative (real call chains, not just call sites) and gives
-   Layer 6's `program-snapshot` access to provenance it doesn't have today.
-2. **Composable multi-hook dispatch on `RecordHook`** — unblocks Layer 4's
+1. **Composable multi-hook dispatch on `RecordHook`** — unblocks Layer 4's
    single-hook limit and lets provenance/derivation/Tracy coexist on one
-   field instead of competing for the one slot.
-3. **Layer 7's remaining named queries** ("which object allocates the
+   field instead of competing for the one slot. Now the top item, since
+   persistence (formerly top of this list) shipped this cycle (ADR 0039).
+2. **Layer 7's remaining named queries** ("which object allocates the
    most," "when did this invariant first fail") — each its own small,
    scoped addition, not a general query engine.
-4. **A second Layer 9 bridge** (network or GPU) — only once there's a real
+3. **A second Layer 9 bridge** (network or GPU) — only once there's a real
    system available to verify it against honestly, the same bar the
    filesystem bridge was held to.
+4. **`program-snapshot`/`program-history` (Layer 6, scoped) reading the
+   new provenance/derivation tables** — a small, natural extension now
+   that the data exists on disk, not attempted in this pass since
+   `narrate` was the more direct payoff.
