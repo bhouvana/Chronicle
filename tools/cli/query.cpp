@@ -30,17 +30,9 @@ std::vector<std::uint64_t> thread_index(LoadedSession const& session) {
 }
 
 MergedObjectHistory events_from_thread(LoadedSession const& session, std::uint64_t thread_hash) {
-    // Reuses merge_object_history() by treating "every stream in the
-    // session" as one synthetic object -- avoids a second merge/ordering
-    // implementation for what is, mechanically, the same operation
-    // (merge_object_history() only cares that it's handed a name + a list
-    // of streams, not that they share a naming prefix).
-    ObjectGroup everything{"(all streams)", {}};
-    everything.fields.reserve(session.streams.size());
-    for (auto const& stream : session.streams) {
-        everything.fields.push_back(&stream);
-    }
-    auto merged = merge_object_history(everything);
+    // Reuses merge_entire_session() (object_graph.cpp, ADR 0036) rather
+    // than a second merge/ordering implementation.
+    auto merged = merge_entire_session(session);
 
     merged.entries.erase(std::remove_if(merged.entries.begin(), merged.entries.end(),
                                          [&](MergedEntry const& entry) {

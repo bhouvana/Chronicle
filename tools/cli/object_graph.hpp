@@ -47,4 +47,13 @@ struct MergedObjectHistory {
 // established.
 [[nodiscard]] MergedObjectHistory merge_object_history(ObjectGroup const& group);
 
+// docs/adr/0036-whole-program-rewind.md ("Layer 6, scoped"): the exact
+// same merge, over EVERY stream in the session rather than one object's
+// fields -- "rewind everything Chronicle actually instruments, honestly
+// labeled as best-effort across threads," not literal whole-program
+// memory-level determinism (which stays out of scope; see the ADR for
+// why). Mechanically this is merge_object_history() given a synthetic
+// group containing every stream, not a second merge algorithm.
+[[nodiscard]] MergedObjectHistory merge_entire_session(chronicle::io::LoadedSession const& session);
+
 } // namespace chronicle_cli

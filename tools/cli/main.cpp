@@ -303,23 +303,14 @@ int cmd_object_history(std::string const& path, std::string const& object_name) 
 // making "the slider" an ordinal into the one merge this project can
 // actually justify (chronicle_cli::merge_object_history), not a
 // fabricated absolute clock position.
-int cmd_object_snapshot(std::string const& path, std::string const& object_name, std::size_t position) {
-    auto const session = load_file(path);
-    auto const groups = chronicle_cli::group_by_object(session);
-    auto const it = std::find_if(groups.begin(), groups.end(),
-                                  [&](auto const& g) { return g.name == object_name; });
-    if (it == groups.end() || it->fields.empty()) {
-        std::cerr << "no such object (or it has no recorded fields): " << object_name << "\n";
-        return 1;
-    }
-
-    auto const merged = chronicle_cli::merge_object_history(*it);
-    if (merged.entries.empty()) {
-        std::cerr << "object has no recorded events: " << object_name << "\n";
-        return 1;
-    }
-    std::size_t const cutoff = std::min(position, merged.entries.size() - 1);
-
+// Shared by cmd_object_snapshot and cmd_program_snapshot (docs/adr/0036,
+// "Layer 6, scoped"): folds a merged event log up to `cutoff` and prints
+// every field's reconstructed value -- the only difference between "one
+// object's snapshot" and "the whole program's snapshot" is which fields
+// are in `fields` and which merge produced `merged`, not the folding
+// logic itself.
+void print_fields_snapshot(std::vector<LoadedStream const*> const& fields,
+                            chronicle_cli::MergedObjectHistory const& merged, std::size_t cutoff) {
     std::map<std::string, LoadedEvent const*> last_scalar;
     std::map<std::string, std::uint64_t> max_version;
     for (std::size_t i = 0; i <= cutoff; ++i) {
@@ -332,10 +323,7 @@ int cmd_object_snapshot(std::string const& path, std::string const& object_name,
         }
     }
 
-    std::cout << "object-snapshot for " << object_name << " at position " << cutoff << " of "
-               << (merged.entries.size() - 1) << " ("
-               << (merged.ordered_by_hlc ? "ordered by HLC" : "ordered by elapsed_ns, best-effort") << "):\n";
-    for (auto const* field : it->fields) {
+    for (auto const* field : fields) {
         std::cout << "  " << field->name << ": ";
         if (field->shape == StreamShape::Scalar) {
             auto found = last_scalar.find(field->name);
@@ -367,6 +355,70 @@ int cmd_object_snapshot(std::string const& path, std::string const& object_name,
             std::cout << "}\n";
         }
     }
+}
+
+int cmd_object_snapshot(std::string const& path, std::string const& object_name, std::size_t position) {
+    auto const session = load_file(path);
+    auto const groups = chronicle_cli::group_by_object(session);
+    auto const it = std::find_if(groups.begin(), groups.end(),
+                                  [&](auto const& g) { return g.name == object_name; });
+    if (it == groups.end() || it->fields.empty()) {
+        std::cerr << "no such object (or it has no recorded fields): " << object_name << "\n";
+        return 1;
+    }
+
+    auto const merged = chronicle_cli::merge_object_history(*it);
+    if (merged.entries.empty()) {
+        std::cerr << "object has no recorded events: " << object_name << "\n";
+        return 1;
+    }
+    std::size_t const cutoff = std::min(position, merged.entries.size() - 1);
+
+    std::cout << "object-snapshot for " << object_name << " at position " << cutoff << " of "
+               << (merged.entries.size() - 1) << " ("
+               << (merged.ordered_by_hlc ? "ordered by HLC" : "ordered by elapsed_ns, best-effort") << "):\n";
+    print_fields_snapshot(it->fields, merged, cutoff);
+    return 0;
+}
+
+// docs/adr/0036-whole-program-rewind.md ("Layer 6, scoped"): the same
+// merge/fold as object-history/object-snapshot, over every stream in the
+// session instead of one object's fields. Deliberately NOT a claim of
+// memory-level determinism -- "rewind everything Chronicle actually
+// instruments," best-effort across threads, exactly like every other
+// cross-stream merge this project ships (ADR 0003/0019's standing
+// caveat applies here at full-program scope, not a stronger one).
+int cmd_program_history(std::string const& path) {
+    auto const session = load_file(path);
+    auto const merged = chronicle_cli::merge_entire_session(session);
+    std::cout << "program-history (" << merged.entries.size() << " event(s) across " << session.streams.size()
+               << " stream(s), "
+               << (merged.ordered_by_hlc ? "ordered by HLC" : "ordered by elapsed_ns, best-effort") << "):\n";
+    for (auto const& entry : merged.entries) {
+        std::cout << entry.field_name << "  ";
+        print_event(*entry.event, entry.shape);
+    }
+    return 0;
+}
+
+int cmd_program_snapshot(std::string const& path, std::size_t position) {
+    auto const session = load_file(path);
+    auto const merged = chronicle_cli::merge_entire_session(session);
+    if (merged.entries.empty()) {
+        std::cerr << "session has no recorded events\n";
+        return 1;
+    }
+    std::size_t const cutoff = std::min(position, merged.entries.size() - 1);
+
+    std::vector<LoadedStream const*> all_fields;
+    all_fields.reserve(session.streams.size());
+    for (auto const& stream : session.streams) {
+        all_fields.push_back(&stream);
+    }
+
+    std::cout << "program-snapshot at position " << cutoff << " of " << (merged.entries.size() - 1) << " ("
+               << (merged.ordered_by_hlc ? "ordered by HLC" : "ordered by elapsed_ns, best-effort") << "):\n";
+    print_fields_snapshot(all_fields, merged, cutoff);
     return 0;
 }
 
@@ -431,6 +483,8 @@ void print_usage() {
                  "  chronicle-cli query most-changed <file>\n"
                  "  chronicle-cli query threads <file>\n"
                  "  chronicle-cli query thread <file> <thread-index>\n"
+                 "  chronicle-cli program-history <file>\n"
+                 "  chronicle-cli program-snapshot <file> <position>\n"
                  "  chronicle-cli export --html <file> <output.html>\n"
                  "  chronicle-cli export --perfetto <file> <output.json>\n"
 #ifdef CHRONICLE_CLI_HAVE_HTTPLIB
@@ -480,6 +534,12 @@ int main(int argc, char** argv) {
         }
         if (args[0] == "query" && args.size() == 4 && args[1] == "thread") {
             return cmd_query_thread(args[2], static_cast<std::size_t>(std::stoull(args[3])));
+        }
+        if (args[0] == "program-history" && args.size() == 2) {
+            return cmd_program_history(args[1]);
+        }
+        if (args[0] == "program-snapshot" && args.size() == 3) {
+            return cmd_program_snapshot(args[1], static_cast<std::size_t>(std::stoull(args[2])));
         }
         if (args[0] == "export" && args.size() == 4 && args[1] == "--html") {
             return cmd_export_html(args[2], args[3]);

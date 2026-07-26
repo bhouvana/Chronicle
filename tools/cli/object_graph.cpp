@@ -46,4 +46,13 @@ MergedObjectHistory merge_object_history(ObjectGroup const& group) {
     return result;
 }
 
+MergedObjectHistory merge_entire_session(LoadedSession const& session) {
+    ObjectGroup everything{"(entire program)", {}};
+    everything.fields.reserve(session.streams.size());
+    for (auto const& stream : session.streams) {
+        everything.fields.push_back(&stream);
+    }
+    return merge_object_history(everything);
+}
+
 } // namespace chronicle_cli
