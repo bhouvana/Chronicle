@@ -38,15 +38,19 @@ follow-ons, open direction, not committed:
   distinguish "retired" from "just idle" without one, and inferring it
   from silence would be a fabricated claim.
 
-## Layer 3 — Provenance — open direction
-`last_writer()` + `call_site` already answer "this value, from this
-line" (one stack frame). A full causal chain (`ApplyDamage() ←
-Projectile::Hit() ← Physics() ← UpdateFrame()`) needs real stack
-unwinding + symbol resolution — a bounded, buildable engineering task, not
-a research problem, but real scope (walking frames costs real per-event
-overhead that would need measuring, same discipline as every ADR in this
-project — see ADR 0019's honest 30-50% HLC cost as the standard to hold
-this to).
+## Layer 3 — Provenance — **done** (this cycle) — [ADR 0032](adr/0032-provenance-stacktrace.md)
+`chronicle::set_with_stacktrace()`/`provenance_of()`, built on C++23
+`std::stacktrace`, verified on both compilers this project's CI matrix has
+(MSVC 19.44, Clang 21.1.6). The real, measured cost turned out far larger
+than the "needs measuring" note originally here anticipated — **116,787.63
+ns/op**, ~1,300-1,850x a plain tracked write, three orders of magnitude
+past even `causal_clock`'s cost. That evidence directly shaped the design:
+a separate, differently-named, explicit per-call opt-in, never a
+`Session::Config` flag, never on `record()`'s hot path. In-process only —
+**not yet persisted to the `.chronicle` wire format**; that's the real,
+concretely-scoped next follow-on for this layer (a new format bump, plus a
+real decision about storing variable-length per-event trace data, and only
+then a `chronicle-cli` surface for it).
 
 ## Layer 4 — Derived State — open direction, needs a design decision first
 `gold = income - tax`, auto-explained. This is a real fork, not a natural
