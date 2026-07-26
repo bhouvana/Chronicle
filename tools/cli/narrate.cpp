@@ -63,20 +63,48 @@ void write_narration(LoadedSession const& session, std::string const& object_nam
         << (merged.entries.size() - 1) << ":\n\n";
 
     // -- current state + provenance (real, persisted data only) --
+    // docs/adr/0039-persist-provenance-and-derivation.md: full call chains
+    // and derivation explanations are now available offline when the
+    // producing process opted a field into set_with_stacktrace()/
+    // derive() -- this is the fuller Layer 10 narrative ADR 0038 said
+    // would "fall out for free once persistence exists." Falls back to
+    // the single persisted call site for every field that didn't opt in
+    // (still the overwhelming common case).
     auto const snapshots = snapshot_fields(it->fields, merged, cutoff);
     for (auto const& snap : snapshots) {
-        out << "  " << snap.field_name << ": " << (snap.recorded ? snap.rendered : "(not yet recorded)");
-        // Last event at/before cutoff for this specific field, for its call site.
+        out << "  " << snap.field_name << ": " << (snap.recorded ? snap.rendered : "(not yet recorded)") << "\n";
+        // Last event at/before cutoff for this specific field.
         LoadedEvent const* last_event = nullptr;
         for (std::size_t i = 0; i <= cutoff; ++i) {
             if (merged.entries[i].field_name == snap.field_name) {
                 last_event = merged.entries[i].event;
             }
         }
-        if (last_event != nullptr) {
-            out << "  (last write: " << call_site_description(last_event->call_site) << ")";
+        if (last_event == nullptr) {
+            continue;
         }
-        out << "\n";
+
+        if (auto const* changes = session.derivation_for(snap.field_name, last_event->version)) {
+            out << "    derived because:\n";
+            for (auto const& change : *changes) {
+                out << "      " << change.name << ": " << change.old_value << " -> " << change.new_value
+                    << (change.changed ? " (changed)" : " (unchanged)") << "\n";
+            }
+        } else if (auto const* frames = session.provenance_for(snap.field_name, last_event->version)) {
+            out << "    call chain (most recent frame first):\n";
+            for (auto const& frame : *frames) {
+                out << "      " << frame.description;
+                if (!frame.source_file.empty()) {
+                    auto const slash = frame.source_file.find_last_of("/\\");
+                    std::string const filename =
+                        slash == std::string::npos ? frame.source_file : frame.source_file.substr(slash + 1);
+                    out << "  (" << filename << ":" << frame.source_line << ")";
+                }
+                out << "\n";
+            }
+        } else {
+            out << "    last write: " << call_site_description(last_event->call_site) << "\n";
+        }
     }
 
     // -- structural anomaly pass (docs/13-vision.md Layer 8) --
