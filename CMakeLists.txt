@@ -21,6 +21,7 @@ option(CHRONICLE_BUILD_TOOLS "Build chronicle-cli" ON)
 option(CHRONICLE_BUILD_CODEGEN "Build chronicle-codegen (requires a Clang/LLVM CMake package install)" OFF)
 option(CHRONICLE_BUILD_TRACY_EXAMPLE "Build the Tracy bridge example (requires a Tracy CMake package install)" OFF)
 option(CHRONICLE_BUILD_ENTT_ADAPTER "Build chronicle-adapter-entt and its example (requires an EnTT CMake package install)" OFF)
+option(CHRONICLE_BUILD_MEMCPY_SHIM "Build the Windows Detours-based memcpy interposition demo (requires Detours; Windows only, opt-in diagnostic tool, not part of chronicle-core)" OFF)
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     add_compile_options(/W4)
@@ -66,5 +67,15 @@ if(CHRONICLE_BUILD_ENTT_ADAPTER)
     # example when the adapter itself actually configured.
     if(CHRONICLE_BUILD_EXAMPLES AND TARGET chronicle-adapter-entt)
         add_subdirectory(examples/entt-integration)
+    endif()
+endif()
+
+if(CHRONICLE_BUILD_MEMCPY_SHIM)
+    if(WIN32)
+        add_subdirectory(tools/memcpy-shim)
+    else()
+        message(STATUS "chronicle-memcpy-shim: Windows-only (Detours-based); skipping on this platform. "
+                        "See docs/adr/0029-memcpy-interposition.md for the (untested-in-this-project) "
+                        "LD_PRELOAD sketch for Linux.")
     endif()
 endif()

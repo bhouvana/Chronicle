@@ -187,6 +187,23 @@ documented, honest blind-spot statement in
 findings-only, matching this document's own "not a solved problem"
 framing — no ADR, no shipped code, no opt-in build flag added.
 
+**The address-range-filtering follow-up — now shipped (Windows) — see
+[ADR 0029](adr/0029-memcpy-interposition.md).**
+`chronicle::interposition::Registry` plus an opt-in
+`CHRONICLE_BUILD_MEMCPY_SHIM` Detours module close the specific gap this
+spike identified. A real, run demo confirms both halves honestly in one
+output (`total_calls=2 watched_hits=1`): the compile-time-constant blind
+spot above is reconfirmed, not fixed (address filtering can't fix it), and
+the new filtering capability correctly distinguishes a watched destination
+from an unwatched one for the runtime-variable-size copies that do
+survive. The cost/value conclusion above is otherwise unchanged — still an
+opt-in, off-by-default diagnostic tool, not a recommended always-on
+feature. The Linux LD_PRELOAD side has a real, standard implementation
+sketch (`tools/memcpy-shim/linux/memcpy_preload.cpp`) but is honestly
+**untested** — no Linux available in this tool-execution environment,
+documented the same way as the VS Code extension's Electron-GUI gap
+(ADR 0022) rather than silently claimed as verified.
+
 ## 4. Formal cost model / static analysis for "what will tracking this cost me"
 An IDE/compiler-time tool that estimates, from a tracked field's write frequency in
 a profiled run, what its history storage footprint and hot-path cost will be —

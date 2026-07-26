@@ -12,6 +12,7 @@ add_executable(chronicle-core-tests
     race_test.cpp
     anomaly_test.cpp
     embedded_test.cpp
+    interposition_registry_test.cpp
 )
 target_link_libraries(chronicle-core-tests PRIVATE chronicle::core)
 target_include_directories(chronicle-core-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
