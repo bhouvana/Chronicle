@@ -317,6 +317,42 @@ overclaimed. No breaking API changes were introduced beyond the already-anticipa
 bumps (v3 → v4 for the HLC); v1.0's [API stability commitment](adr/0018-v1-api-stability-commitment.md)
 holds.
 
+## Post-v2.0 research-backlog cycle — "Ship or honestly wall off all of Phase 12" — done
+Not a numbered milestone (docs/12's items are explicitly research, not
+committed roadmap), but a real, complete pass over every open item in
+[docs/12-future-research-topics.md](12-future-research-topics.md),
+overriding that document's normal "evaluate, don't ship" default at
+explicit user direction:
+- [x] `possible_race()` — topic 1's own recommended spike follow-up,
+  shipped ([ADR 0023](adr/0023-possible-race-query.md)).
+- [x] Cost-model estimator — topic 4, shipped
+  ([ADR 0024](adr/0024-cost-model-tool.md)).
+- [x] Cross-run diffing (`chronicle-cli diff-runs`) — topic 5, shipped
+  ([ADR 0025](adr/0025-cross-run-diffing.md)).
+- [x] Range-anomaly scoring — topic 8, shipped
+  ([ADR 0026](adr/0026-anomaly-detection.md)).
+- [x] Embedded allocation-free tier — topic 7, shipped
+  ([ADR 0027](adr/0027-embedded-tier.md)).
+- [x] Multi-process session merge — topic 6, partially shipped (file-based,
+  no live transport, no fabricated cross-process ordering —
+  [ADR 0028](adr/0028-multiprocess-merge.md)).
+- [x] Address-range-filtered `memcpy` interposition — topic 3, shipped on
+  Windows; Linux LD_PRELOAD side is a real, unverified sketch, honestly
+  labeled ([ADR 0029](adr/0029-memcpy-interposition.md)).
+- [x] C++26 reflection (P2996) — topic 2, verified as a real environmental
+  wall (no available compiler defines `__cpp_reflection`) rather than
+  implemented ([ADR 0030](adr/0030-p2996-reflection-gate.md)).
+
+Every item that could be built was verified against something real — a
+real running Detours hook, real generated `.chronicle` files, a real
+allocation-counting test, real numbers from `bench/baseline.json` — not
+assumed from inspection. This does **not** constitute a v3 commitment or
+change this roadmap's own "no milestone starts before its predecessor's
+value is validated by real usage" philosophy; it's a one-time, explicitly
+directed exception to docs/12's normal evaluation-only default, recorded
+here for the same reason Post-v0.2 hardening is: real, load-bearing work
+with no new numbered milestone.
+
 ## Explicit anti-goals for this roadmap
 
 No milestone before v1.0 attempts multithreaded deterministic global replay,
