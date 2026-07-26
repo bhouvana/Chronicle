@@ -194,6 +194,16 @@ turning Phase 9's performance philosophy from "measure after the fact" into
 "predict before you commit to tracking this field." Related to existing static
 cost-model work in the compile-time reflection/constexpr space.
 
+**Shipped — see [ADR 0024](adr/0024-cost-model-tool.md).** `bench/cost_model.py`
+projects hot-path cost and on-disk storage footprint for a `tracked<T>`
+scalar field from real `bench/baseline.json` numbers plus a directly
+measured on-disk bytes/event constant, given an expected write frequency,
+thread count, causal-clock setting, and retention policy. Refuses to
+estimate configurations `chronicle-bench` has no real measurement for
+(e.g. contended + causal_clock) rather than guessing. Scalar-only for
+now — `tracked_vector`/`tracked_map`'s variable-size payloads need their
+own measurement methodology, left as real future scope.
+
 ## 5. Cross-run / cross-session diffing
 Phase 2 identifies this as a killer feature for the simulation/robotics audience
 ("diff two runs of the same scenario"). Requires solving stream *alignment* across
