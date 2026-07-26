@@ -52,14 +52,21 @@ concretely-scoped next follow-on for this layer (a new format bump, plus a
 real decision about storing variable-length per-event trace data, and only
 then a `chronicle-cli` surface for it).
 
-## Layer 4 — Derived State — open direction, needs a design decision first
-`gold = income - tax`, auto-explained. This is a real fork, not a natural
-extension of Layer 1: either (a) an explicit reactive/signals API the
-caller opts a field into (buildable, but a second programming model
-alongside the recording one), or (b) inferring dependencies from source
-via static analysis (a much larger, genuinely research-shaped
-undertaking, closer to what a compiler or datalog engine does). Don't
-scope this until which one is meant is decided.
+## Layer 4 — Derived State — **done** (this cycle) — [ADR 0033](adr/0033-derived-state.md)
+`gold = income - tax`, auto-explained. The fork this entry originally
+named is resolved: **(a)**, the explicit reactive API — `chronicle::derive()`/
+`explain()`, built entirely on the existing `Stream<T>::RecordHook`
+extension point (the same one the Tracy bridge already uses), not (b)
+static-analysis-based dependency inference, which would be a project on
+the scale of `tools/codegen`'s Clang tool and was deferred as genuinely
+different, larger scope. Real, stated limits: `RecordHook` is single-slot
+per stream (can't compose with e.g. a Tracy hook on the same dependency),
+no derived-of-derived (no dependency-graph ordering/cycle detection
+attempted), in-process only. The natural follow-ons, open direction, not
+committed: composable multi-hook dispatch (would unblock both limits at
+once), and persistence — shared with Layer 3's provenance follow-on, since
+both are in-process-only for the same underlying reason (no wire-format
+support for arbitrary per-event side-channel data yet).
 
 ## Layer 5 — Object Time Machine — mostly done, compositionally
 `history(player)` instead of one field at a time is exactly
