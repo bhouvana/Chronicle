@@ -9,6 +9,7 @@
 // chronicle/io/loaded_session.hpp).
 
 #include "diff_runs.hpp"
+#include "doctor.hpp"
 #include "html_export.hpp"
 #include "merge.hpp"
 #include "narrate.hpp"
@@ -383,6 +384,18 @@ int cmd_program_snapshot(std::string const& path, std::size_t position) {
     return 0;
 }
 
+// docs/adr/0041-doctor-and-rules.md: "people love tools that tell them
+// what's wrong before they know what to ask" -- pure composition of
+// existing, already-verified primitives (group_by_object, most_changed_streams,
+// thread_index, merge_entire_session) plus two new whole-file detection
+// passes (tools/cli/doctor.cpp). Exit code reflects health, so this is
+// usable as a CI gate, not just an interactive report.
+int cmd_doctor(std::string const& path) {
+    auto const session = load_file(path);
+    bool const issues_found = chronicle_cli::write_doctor_report(session, std::cout);
+    return issues_found ? 1 : 0;
+}
+
 // docs/adr/0038-narrative-composer.md ("Layer 10"): composes existing,
 // already-persisted primitives (object-snapshot values, call sites, a
 // possible_race()-mirroring pass, a container-growth pass) into one
@@ -458,6 +471,7 @@ void print_usage() {
                  "  chronicle-cli program-history <file>\n"
                  "  chronicle-cli program-snapshot <file> <position>\n"
                  "  chronicle-cli narrate <file> <object-name> <position>\n"
+                 "  chronicle-cli doctor <file>\n"
                  "  chronicle-cli export --html <file> <output.html>\n"
                  "  chronicle-cli export --perfetto <file> <output.json>\n"
 #ifdef CHRONICLE_CLI_HAVE_HTTPLIB
@@ -516,6 +530,9 @@ int main(int argc, char** argv) {
         }
         if (args[0] == "narrate" && args.size() == 4) {
             return cmd_narrate(args[1], args[2], static_cast<std::size_t>(std::stoull(args[3])));
+        }
+        if (args[0] == "doctor" && args.size() == 2) {
+            return cmd_doctor(args[1]);
         }
         if (args[0] == "export" && args.size() == 4 && args[1] == "--html") {
             return cmd_export_html(args[2], args[3]);
