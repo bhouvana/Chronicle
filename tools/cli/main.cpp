@@ -487,6 +487,15 @@ int cmd_query_thread(std::string const& path, std::size_t thread_index_arg) {
 
 void print_usage() {
     std::cout << "usage:\n"
+                 "  every subcommand below also works prefixed with a group verb --\n"
+                 "  inspect/compare/analyze -- e.g. `chronicle-cli inspect objects <file>`\n"
+                 "  is identical to `chronicle-cli objects <file>`. Convenience grouping,\n"
+                 "  not an enforced category (docs/adr/0043-cli-verb-grouping.md):\n"
+                 "    inspect  -- list, history, objects, object-history, object-snapshot,\n"
+                 "                program-history, program-snapshot\n"
+                 "    compare  -- diff, diff-runs, merge\n"
+                 "    analyze  -- query, narrate, doctor\n"
+                 "\n"
                  "  chronicle-cli list <file>\n"
                  "  chronicle-cli history <file> <stream-name>\n"
                  "  chronicle-cli diff <file> <stream-name> <version-a> <version-b>\n"
@@ -521,6 +530,16 @@ int main(int argc, char** argv) {
     bool const json = !args.empty() && args.back() == "--json";
     if (json) {
         args.pop_back();
+    }
+    // docs/adr/0043-cli-verb-grouping.md: inspect/compare/analyze are
+    // purely additive convenience prefixes -- stripped here, so every
+    // dispatch branch below is reached identically whether or not a
+    // group verb was used. Not an enforced category (typing the "wrong"
+    // group verb for a subcommand still works): this is discoverability
+    // sugar over the existing flat command set, not a second command
+    // grammar to keep in sync with it.
+    if (!args.empty() && (args[0] == "inspect" || args[0] == "compare" || args[0] == "analyze")) {
+        args.erase(args.begin());
     }
     try {
         if (args.empty()) {
