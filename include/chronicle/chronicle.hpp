@@ -17,6 +17,7 @@
 #include "chronicle/provenance.hpp"
 #include "chronicle/race.hpp"
 #include "chronicle/retention.hpp"
+#include "chronicle/rules.hpp"
 #include "chronicle/session.hpp"
 #include "chronicle/snapshot.hpp"
 #include "chronicle/stream.hpp"

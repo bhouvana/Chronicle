@@ -19,6 +19,7 @@ add_executable(chronicle-core-tests
     derived_test.cpp
     filesystem_bridge_test.cpp
     record_hook_test.cpp
+    rules_test.cpp
 )
 target_link_libraries(chronicle-core-tests PRIVATE chronicle::core)
 target_include_directories(chronicle-core-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
