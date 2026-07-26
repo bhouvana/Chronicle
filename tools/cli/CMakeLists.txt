@@ -1,7 +1,7 @@
 # chronicle-cli links only chronicle-core's io headers (loaded_session.hpp),
 # never the target program's own types -- see main.cpp's header comment and
 # docs/adr/0005-cli-requires-on-disk-format.md.
-add_executable(chronicle-cli main.cpp html_export.cpp perfetto_export.cpp diff_runs.cpp merge.cpp object_graph.cpp query.cpp)
+add_executable(chronicle-cli main.cpp html_export.cpp perfetto_export.cpp diff_runs.cpp merge.cpp object_graph.cpp query.cpp narrate.cpp)
 target_link_libraries(chronicle-cli PRIVATE chronicle::core)
 
 # Transparent Zstd-compressed-file support (docs/adr/0014-storage-engine-

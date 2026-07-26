@@ -56,4 +56,25 @@ struct MergedObjectHistory {
 // group containing every stream, not a second merge algorithm.
 [[nodiscard]] MergedObjectHistory merge_entire_session(chronicle::io::LoadedSession const& session);
 
+// docs/adr/0034-object-snapshot.md / docs/adr/0038-narrative-composer.md:
+// one field's reconstructed value at a cutoff position -- the data half
+// of what `cmd_object_snapshot`/`cmd_program_snapshot` print, factored out
+// here so `chronicle-cli narrate` (ADR 0038) can consume the same
+// snapshot data without re-deriving the fold logic a third time.
+struct FieldSnapshot {
+    std::string field_name;
+    chronicle::io::StreamShape shape;
+    bool recorded = false; // false => "(not yet recorded)" as of this cutoff
+    std::string rendered;  // pre-rendered display value, valid when recorded == true
+};
+
+// Folds `merged` up to `cutoff` (inclusive) and reconstructs every field
+// in `fields`' value at that point -- scalar fields take the last value
+// at or before cutoff; IndexedOp/KeyedOp fields replay
+// (replay_indexed/replay_keyed, tools/cli/replay.hpp) up to the highest
+// version that field reached at or before cutoff.
+[[nodiscard]] std::vector<FieldSnapshot> snapshot_fields(
+    std::vector<chronicle::io::LoadedStream const*> const& fields, MergedObjectHistory const& merged,
+    std::size_t cutoff);
+
 } // namespace chronicle_cli

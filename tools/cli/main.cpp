@@ -11,6 +11,7 @@
 #include "diff_runs.hpp"
 #include "html_export.hpp"
 #include "merge.hpp"
+#include "narrate.hpp"
 #include "object_graph.hpp"
 #include "perfetto_export.hpp"
 #include "query.hpp"
@@ -311,49 +312,9 @@ int cmd_object_history(std::string const& path, std::string const& object_name) 
 // logic itself.
 void print_fields_snapshot(std::vector<LoadedStream const*> const& fields,
                             chronicle_cli::MergedObjectHistory const& merged, std::size_t cutoff) {
-    std::map<std::string, LoadedEvent const*> last_scalar;
-    std::map<std::string, std::uint64_t> max_version;
-    for (std::size_t i = 0; i <= cutoff; ++i) {
-        auto const& entry = merged.entries[i];
-        if (entry.shape == StreamShape::Scalar) {
-            last_scalar[entry.field_name] = entry.event;
-        } else {
-            auto& mv = max_version[entry.field_name];
-            mv = std::max(mv, entry.event->version);
-        }
-    }
-
-    for (auto const* field : fields) {
-        std::cout << "  " << field->name << ": ";
-        if (field->shape == StreamShape::Scalar) {
-            auto found = last_scalar.find(field->name);
-            std::cout << (found == last_scalar.end() ? "(not yet recorded)"
-                                                       : to_display_string(found->second->value))
-                       << "\n";
-            continue;
-        }
-        auto found = max_version.find(field->name);
-        if (found == max_version.end()) {
-            std::cout << "(not yet recorded)\n";
-            continue;
-        }
-        if (field->shape == StreamShape::IndexedOp) {
-            auto const values = replay_indexed(*field, found->second);
-            std::cout << "[";
-            for (std::size_t i = 0; i < values.size(); ++i) {
-                if (i != 0) std::cout << ", ";
-                std::cout << to_display_string(values[i]);
-            }
-            std::cout << "]\n";
-        } else {
-            auto const kvs = replay_keyed(*field, found->second);
-            std::cout << "{";
-            for (std::size_t i = 0; i < kvs.size(); ++i) {
-                if (i != 0) std::cout << ", ";
-                std::cout << to_display_string(kvs[i].first) << ": " << to_display_string(kvs[i].second);
-            }
-            std::cout << "}\n";
-        }
+    for (auto const& snap : chronicle_cli::snapshot_fields(fields, merged, cutoff)) {
+        std::cout << "  " << snap.field_name << ": " << (snap.recorded ? snap.rendered : "(not yet recorded)")
+                   << "\n";
     }
 }
 
@@ -422,6 +383,17 @@ int cmd_program_snapshot(std::string const& path, std::size_t position) {
     return 0;
 }
 
+// docs/adr/0038-narrative-composer.md ("Layer 10"): composes existing,
+// already-persisted primitives (object-snapshot values, call sites, a
+// possible_race()-mirroring pass, a container-growth pass) into one
+// human-readable report -- an emergent capability, not a new recording
+// mechanism.
+int cmd_narrate(std::string const& path, std::string const& object_name, std::size_t position) {
+    auto const session = load_file(path);
+    chronicle_cli::write_narration(session, object_name, position, std::cout);
+    return 0;
+}
+
 // docs/adr/0035-live-queries.md ("Layer 7"): a small set of real,
 // concrete aggregate queries over an already-loaded session -- not a
 // general query language, three specific answers this project can
@@ -485,6 +457,7 @@ void print_usage() {
                  "  chronicle-cli query thread <file> <thread-index>\n"
                  "  chronicle-cli program-history <file>\n"
                  "  chronicle-cli program-snapshot <file> <position>\n"
+                 "  chronicle-cli narrate <file> <object-name> <position>\n"
                  "  chronicle-cli export --html <file> <output.html>\n"
                  "  chronicle-cli export --perfetto <file> <output.json>\n"
 #ifdef CHRONICLE_CLI_HAVE_HTTPLIB
@@ -540,6 +513,9 @@ int main(int argc, char** argv) {
         }
         if (args[0] == "program-snapshot" && args.size() == 3) {
             return cmd_program_snapshot(args[1], static_cast<std::size_t>(std::stoull(args[2])));
+        }
+        if (args[0] == "narrate" && args.size() == 4) {
+            return cmd_narrate(args[1], args[2], static_cast<std::size_t>(std::stoull(args[3])));
         }
         if (args[0] == "export" && args.size() == 4 && args[1] == "--html") {
             return cmd_export_html(args[2], args[3]);
