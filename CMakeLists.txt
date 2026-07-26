@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(chronicle
-    VERSION 2.1.0
+    VERSION 2.1.1
     DESCRIPTION "Time travel for runtime state"
     HOMEPAGE_URL "https://github.com/bhouvana/Chronicle"
     LANGUAGES CXX
