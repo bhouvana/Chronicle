@@ -13,6 +13,7 @@
 #include "merge.hpp"
 #include "object_graph.hpp"
 #include "perfetto_export.hpp"
+#include "query.hpp"
 #include "replay.hpp"
 #include "serve.hpp"
 #include "session_loader.hpp"
@@ -369,6 +370,54 @@ int cmd_object_snapshot(std::string const& path, std::string const& object_name,
     return 0;
 }
 
+// docs/adr/0035-live-queries.md ("Layer 7"): a small set of real,
+// concrete aggregate queries over an already-loaded session -- not a
+// general query language, three specific answers this project can
+// actually justify from the data it has.
+int cmd_query_most_changed(std::string const& path) {
+    auto const session = load_file(path);
+    auto const activity = chronicle_cli::most_changed_streams(session);
+    for (auto const& entry : activity) {
+        std::cout << entry.name << "  " << entry.event_count << " event(s)\n";
+    }
+    return 0;
+}
+
+int cmd_query_threads(std::string const& path) {
+    auto const session = load_file(path);
+    auto const threads = chronicle_cli::thread_index(session);
+    for (std::size_t i = 0; i < threads.size(); ++i) {
+        std::size_t event_count = 0;
+        for (auto const& stream : session.streams) {
+            for (auto const& event : stream.events) {
+                if (event.thread_hash == threads[i]) {
+                    ++event_count;
+                }
+            }
+        }
+        std::cout << "thread " << i << "  (raw hash " << threads[i] << ")  " << event_count << " event(s)\n";
+    }
+    return 0;
+}
+
+int cmd_query_thread(std::string const& path, std::size_t thread_index_arg) {
+    auto const session = load_file(path);
+    auto const threads = chronicle_cli::thread_index(session);
+    if (thread_index_arg >= threads.size()) {
+        std::cerr << "no such thread index: " << thread_index_arg << " (session has " << threads.size()
+                   << " distinct thread(s), indices 0.." << (threads.empty() ? 0 : threads.size() - 1) << ")\n";
+        return 1;
+    }
+    auto const merged = chronicle_cli::events_from_thread(session, threads[thread_index_arg]);
+    std::cout << "writes from thread " << thread_index_arg << " ("
+               << (merged.ordered_by_hlc ? "ordered by HLC" : "ordered by elapsed_ns, best-effort") << "):\n";
+    for (auto const& entry : merged.entries) {
+        std::cout << entry.field_name << "  ";
+        print_event(*entry.event, entry.shape);
+    }
+    return 0;
+}
+
 void print_usage() {
     std::cout << "usage:\n"
                  "  chronicle-cli list <file>\n"
@@ -379,6 +428,9 @@ void print_usage() {
                  "  chronicle-cli objects <file>\n"
                  "  chronicle-cli object-history <file> <object-name>\n"
                  "  chronicle-cli object-snapshot <file> <object-name> <position>\n"
+                 "  chronicle-cli query most-changed <file>\n"
+                 "  chronicle-cli query threads <file>\n"
+                 "  chronicle-cli query thread <file> <thread-index>\n"
                  "  chronicle-cli export --html <file> <output.html>\n"
                  "  chronicle-cli export --perfetto <file> <output.json>\n"
 #ifdef CHRONICLE_CLI_HAVE_HTTPLIB
@@ -419,6 +471,15 @@ int main(int argc, char** argv) {
         }
         if (args[0] == "object-snapshot" && args.size() == 4) {
             return cmd_object_snapshot(args[1], args[2], static_cast<std::size_t>(std::stoull(args[3])));
+        }
+        if (args[0] == "query" && args.size() == 3 && args[1] == "most-changed") {
+            return cmd_query_most_changed(args[2]);
+        }
+        if (args[0] == "query" && args.size() == 3 && args[1] == "threads") {
+            return cmd_query_threads(args[2]);
+        }
+        if (args[0] == "query" && args.size() == 4 && args[1] == "thread") {
+            return cmd_query_thread(args[2], static_cast<std::size_t>(std::stoull(args[3])));
         }
         if (args[0] == "export" && args.size() == 4 && args[1] == "--html") {
             return cmd_export_html(args[2], args[3]);
