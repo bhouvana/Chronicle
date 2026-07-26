@@ -111,6 +111,19 @@ discovery require rethinking the opt-in-per-field cost model (Phase 7) that
 currently underpins the zero-cost guarantee? Track P2996's standardization status
 and prototype against experimental compiler support as it becomes available.
 
+**Environmental wall documented, not implemented — see
+[ADR 0030](adr/0030-p2996-reflection-gate.md).** Verified directly (a real
+probe program, not assumed): neither MSVC 19.44 nor Clang 21.1.6 — both
+toolchains actually available here, the latter the exact compiler
+`bench/baseline.json` was captured with — define `__cpp_reflection`. No
+compiler exists in this environment to write and test a real P2996-based
+registration backend against, so none was written — the same honesty
+standard as the VS Code extension's Electron-GUI gap (ADR 0022), rather
+than unverifiable reflection syntax nobody here could compile.
+`chronicle::reflect::p2996_available` (`include/chronicle/reflect_p2996.hpp`)
+is a real, always-compiles feature gate plus a deliberate canary test that
+will correctly break the day this becomes actionable.
+
 ## 3. Raw-memory interposition (closing the `memcpy`/DMA blind spot)
 Phase 4 documents this as a permanent architectural blind spot for the core model.
 Worth a dedicated research spike: how much of the gap can an *opt-in*, clearly
