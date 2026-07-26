@@ -80,16 +80,17 @@ together with no established same-thread program-order relationship are
 exactly the shape of "apparent race" (c) called for flagging, and the
 `HlcTimestamp` comparison this already needs is the *same* comparison
 `snapshot_at_hlc()` already does, not new machinery. **Concrete, real
-follow-up** (not attempted in this spike, since the roadmap item is
-explicitly "evaluated... not pre-committed," and this is genuinely new
-scope beyond evaluation): a query like `chronicle::possible_race(event_a,
-event_b)` returning true when two events' HLCs are within some configurable
-window and their threads differ, usable by the interactive viewer
-([ADR 0016](adr/0016-interactive-browser-viewer.md)) to annotate a
-cross-stream query result as "these may have raced" instead of presenting
-a single false-confident answer. Left as a real, scoped, cheap next step
-for whenever it's prioritized — not spun into a v3 commitment by this
-spike, per the roadmap's own instruction.
+follow-up — now shipped, per [ADR 0023](adr/0023-possible-race-query.md).**
+`chronicle::possible_race(event_a, event_b, window_us = 0)` returns true when
+two events' HLCs are within a configurable window and their threads differ,
+scoped honestly as "may have raced" — this project's source-level
+instrumentation has no synchronization information to claim more. Verified
+with real racing threads, not simulated timestamps —
+`tests/unit/race_test.cpp`, 264/264 checks across 58 tests. Not a reopening
+of the "no v3 commitment" conclusion below: it's the one narrowly-scoped
+primitive candidate (c) called for, built entirely on machinery (the HLC)
+that already existed, with no new cost and no new wire-format version. Still
+not usable across different `Session`s/processes — see topics 5 and 6.
 
 **Bottom line**: no v3 commitment to full deterministic replay. The
 evidence this project has actually collected — two real concurrency bugs
