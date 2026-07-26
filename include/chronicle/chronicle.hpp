@@ -8,6 +8,7 @@
 #include "chronicle/anomaly.hpp"
 #include "chronicle/container_diff.hpp"
 #include "chronicle/container_op.hpp"
+#include "chronicle/derived.hpp"
 #include "chronicle/diff.hpp"
 #include "chronicle/event.hpp"
 #include "chronicle/map_diff.hpp"

@@ -16,6 +16,7 @@ add_executable(chronicle-core-tests
     reflect_p2996_test.cpp
     object_graph_test.cpp
     provenance_test.cpp
+    derived_test.cpp
 )
 target_link_libraries(chronicle-core-tests PRIVATE chronicle::core)
 target_include_directories(chronicle-core-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
