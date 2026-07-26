@@ -5,6 +5,7 @@
 //
 // #include <chronicle/chronicle.hpp>
 
+#include "chronicle/anomaly.hpp"
 #include "chronicle/container_diff.hpp"
 #include "chronicle/container_op.hpp"
 #include "chronicle/diff.hpp"

@@ -10,6 +10,7 @@ add_executable(chronicle-core-tests
     hlc_test.cpp
     tracked_memory_resource_test.cpp
     race_test.cpp
+    anomaly_test.cpp
 )
 target_link_libraries(chronicle-core-tests PRIVATE chronicle::core)
 target_include_directories(chronicle-core-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

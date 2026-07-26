@@ -246,3 +246,13 @@ follow-on: flag "this field's value is outside its historically observed range/r
 of change" automatically. Explicitly deferred past v2.0 — real risk of becoming
 a research distraction from the core value proposition (Phase 3) before the
 foundational query/replay experience is proven in the wild.
+
+**Shipped — see [ADR 0026](adr/0026-anomaly-detection.md).**
+`chronicle::range_anomalies()` scores a `tracked<T>` scalar's history
+against its own causal (past-only, never hindsight) running mean/stddev via
+Welford's algorithm — real statistical scoring, explicitly not a trained ML
+model, stated plainly since "machine-assisted" could otherwise overclaim.
+Scalar-only, same scoping precedent as the cost-model tool (topic 4).
+Verified including a test that specifically exercises the causal design
+choice (an early outlier followed by 30 normal values is still flagged,
+which a whole-history batch z-score could have washed out).
