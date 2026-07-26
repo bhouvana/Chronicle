@@ -210,10 +210,23 @@ private:
 
 namespace chronicle {
 
-template <typename Result, typename... Deps>
+// `compute` is deduced as its own type Fn -- NOT written as
+// std::function<Result(Deps const&...)> directly -- because Deps is a
+// pack shared with the trailing `tracked<Deps>&... deps` parameter.
+// GCC and Clang apply the class-template-deduction rule (temp.deduct.call)
+// to a std::function-typed parameter: the argument must literally be (or
+// derive from) a std::function specialization, not merely convertible to
+// one, so a plain lambda is rejected even with Result/Deps fully spelled
+// out via explicit template arguments -- confirmed as a real, reproducible
+// portability bug (MSVC alone accepts it; a standalone repro against
+// local Clang 21.1.6 reproduced the exact failure and confirmed this
+// fix). Converting Fn to ComputeFn ourselves, as an ordinary (non-deduced)
+// constructor call below, sidesteps that rule entirely.
+template <typename Result, typename... Deps, typename Fn>
 [[nodiscard]] std::unique_ptr<derived::Derivation<Result, Deps...>> derive(
-    tracked<Result>& target, std::function<Result(Deps const&...)> compute, tracked<Deps>&... deps) {
-    return std::make_unique<derived::Derivation<Result, Deps...>>(target, std::move(compute), deps...);
+    tracked<Result>& target, Fn compute, tracked<Deps>&... deps) {
+    return std::make_unique<derived::Derivation<Result, Deps...>>(
+        target, std::function<Result(Deps const&...)>(std::move(compute)), deps...);
 }
 
 template <typename Result>
