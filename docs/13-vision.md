@@ -179,6 +179,45 @@ resolved `file:line`, a `derive()` target correctly attributes its change
 to the dependency that actually moved. This was the last named gap in this
 layer; nothing further is queued against it.
 
+## Beyond the 10 layers: platform primitives (post-review cycle)
+A later review of the full capability surface concluded the next
+order-of-magnitude jump isn't more recording features — it's making
+Chronicle the foundation other tooling builds on. That review proposed
+several concrete directions; here's what happened to each:
+
+- **`chronicle-cli doctor`** — done, [ADR 0041](adr/0041-doctor-and-rules.md).
+  "Tell me what's wrong before I know what to ask," composed entirely from
+  already-existing, already-verified primitives plus two new whole-file
+  detection passes. Exit code reflects health — a real CI gate.
+- **Rules / runtime verification** — done, ADR 0041.
+  `chronicle::rules::check_rule()` (offline) and `chronicle::watch()`
+  (live) are one predicate, two entry points, the live one built directly
+  on ADR 0040's composable `RecordHook` — verified to coexist with a
+  `derive()` binding on the same field. Scoped to scalar point predicates;
+  container and temporal rules are named future work.
+- **AI-readable output** — done, in the cheap form:
+  [ADR 0042](adr/0042-json-output-modes.md)'s `--json` mode on
+  `objects`/`doctor`/`narrate`. The full "Chronicle as AI-readable
+  runtime database" framing doesn't need a query language to start
+  paying off — it needs structured output, which is a fraction of the
+  cost and shipped this cycle.
+- **CLI verb regrouping** — done, [ADR 0043](adr/0043-cli-verb-grouping.md).
+  `inspect`/`compare`/`analyze` as additive prefixes, zero breaking
+  changes to any existing invocation.
+- **A general query language / "Chronicle IR"** — **evaluated and
+  deferred a second time**, not built. [ADR 0035](adr/0035-live-queries.md)
+  already made this call once; the review's proposal didn't present new
+  evidence, just renewed ambition, so the same reasoning holds: Chronicle's
+  live (typed, zero-cost-hot-path) and offline (type-erased) data models
+  genuinely fork, and a query planner spanning both is a database-engine-
+  scale project, not a refactor of what exists. Worth revisiting once the
+  `doctor`/JSON/rules surface proves insufficient in real use — that's the
+  evidence this needs, not a redesign done speculatively ahead of it.
+- **"What not to build" list** (no ECS, networking framework,
+  serialization library, scripting, DI, allocators, custom containers) —
+  affirmed, not reopened. Every feature added this cycle still answers
+  "how did this program's state evolve," not a new, unrelated concern.
+
 ## How to use this document
 All 10 layers now have a real, honest disposition and, where something was
 actually built, an ADR to show for it. Picking this up again means
